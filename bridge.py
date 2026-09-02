@@ -4,6 +4,7 @@ import ftplib, json, os, socket, ssl, subprocess, sys, tempfile, time, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+WEB = os.path.join(HERE, 'web')
 AI_LOG = os.path.join(HERE, 'ai-log.jsonl')
 CFG = os.path.expanduser('~/.pen3d.json')
 STUDIO = '/Applications/BambuStudio.app/Contents/MacOS/BambuStudio'
@@ -132,8 +133,8 @@ class H(BaseHTTPRequestHandler):
         if self.path.split('?')[0].rstrip('/').endswith('/ai-log'):
             return self.do_ai_log()
         rel = self.path.split('?')[0].lstrip('/') or 'index.html'
-        path = os.path.normpath(os.path.join(HERE, rel))
-        if not path.startswith(HERE) or not os.path.isfile(path):
+        path = os.path.normpath(os.path.join(WEB, rel))
+        if not path.startswith(WEB) or not os.path.isfile(path):
             return self._send(404, {'error': 'not found'})
         body = open(path, 'rb').read()
         ctype = {'.html': 'text/html', '.js': 'text/javascript',

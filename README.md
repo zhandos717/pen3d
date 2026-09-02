@@ -4,11 +4,17 @@
 
 > Browser-based 3D editor that slices and prints to a Bambu Lab A1 over LAN, no Bambu Cloud involved.
 
-## Файлы
+## Структура
 
-- `index.html` — 3D-редактор (примитивы, AI-помощник через DeepSeek)
-- `editor-2d-old.html` — старая 2D-версия
-- `bridge.py` — локальный сервер: раздаёт статику, слайсит STL и печатает
+```
+bridge.py              локальный сервер: раздаёт web/, слайсит STL, печатает
+web/
+  index.html           3D-редактор (примитивы, AI-помощник)
+  icon.svg             иконка
+  editor-2d-old.html   старая 2D-версия
+```
+
+Сервер отдаёт наружу только содержимое `web/` — `bridge.py`, `ai-log.jsonl` и конфиг по HTTP недоступны.
 
 ## Запуск
 

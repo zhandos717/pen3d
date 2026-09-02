@@ -8,8 +8,14 @@
 - `icon.svg` — иконка проекта, подключена как favicon в обоих редакторах.
 - `CHANGELOG.md`.
 
+### Changed
+- Статика переехала в `web/`; сервер раздаёт только её.
+
 ### Fixed
 - `bridge.py` отдавал `.svg` как `application/octet-stream` — браузер не показывал favicon.
+
+### Security
+- Раньше `GET /bridge.py` и `GET /ai-log.jsonl` отдавали эти файлы любому, кто знал путь. Теперь корень раздачи — `web/`.
 
 ## [0.1.0] — 2026-09-02
 
