@@ -154,12 +154,14 @@ def check_scene(shapes):
 STOP = {'flag': False}
 
 
-def trim_history(messages, keep=6, limit=60000):
+def trim_history(messages, keep=6, limit=60000, legacy=False):
     """DeepSeek кэширует общий ПРЕФИКС запроса и берёт за него в разы меньше,
     поэтому историю не трогаем, пока она не станет неприлично большой:
     правка старых сообщений обнуляет кэш и выходит дороже, чем сэкономленные токены."""
-    if sum(len(str(m.get('content') or '')) for m in messages) < limit:
+    if not legacy and sum(len(str(m.get('content') or '')) for m in messages) < limit:
         return messages
+    if legacy:
+        keep = 3
     tool_idx = [i for i, m in enumerate(messages) if m.get('role') == 'tool']
     for i in tool_idx[:-keep]:
         c = messages[i].get('content') or ''
@@ -168,7 +170,9 @@ def trim_history(messages, keep=6, limit=60000):
     return messages
 
 
-def run_agent(task, scene, model, base, key, on_event=None, max_steps=10):
+def run_agent(task, scene, model, base, key, on_event=None, max_steps=10, legacy=False):
+    """legacy=True воспроизводит прежнее поведение (сжатие истории, без temperature)
+    — нужно только для честного сравнения расхода токенов."""
     """Цикл tool-use: модель строит деталь, проверяет её и правит сама."""
     import urllib.request
     shapes = [dict(o) for o in (scene or [])]
@@ -224,9 +228,12 @@ def run_agent(task, scene, model, base, key, on_event=None, max_steps=10):
         if STOP['flag']:
             trace.append({'step': step, 'stopped': True})
             break
+        body = {'model': model, 'max_tokens': 4000, 'tools': TOOLS,
+                'messages': trim_history(messages, legacy=legacy)}
+        if not legacy:
+            body['temperature'] = 0
         req = urllib.request.Request(base + '/chat/completions', headers=headers,
-            data=json.dumps({'model': model, 'max_tokens': 4000, 'tools': TOOLS,
-                             'temperature': 0, 'messages': trim_history(messages)}).encode())
+                                     data=json.dumps(body).encode())
         if on_event:
             on_event({'type': 'thinking', 'step': step})
         r = json.load(urllib.request.urlopen(req, timeout=180))
@@ -493,7 +500,7 @@ class H(BaseHTTPRequestHandler):
             model = req_body.get('model') or c.get('model') or 'deepseek-chat'
             key = req_body.get('key') or c.get('deepseek_key') or c.get('api_key') or ''
             out = run_agent(req_body['task'], req_body.get('scene') or [], model, base, key, None,
-                            int(req_body.get('max_steps') or 10))
+                            int(req_body.get('max_steps') or 10), bool(req_body.get('legacy')))
             log_ai(model, 'Деталь: ' + req_body['task'],
                    json.dumps(out['objects'], ensure_ascii=False),
                    dict(out['usage'], steps=len(out['trace'])))
