@@ -13,6 +13,7 @@ An optional AI agent builds parts for you: it places primitives step by step, ch
 - **AI agent** — describe the part in plain language; the agent works with tools (`add_shape`, `update_shape`, `delete_shape`, `get_scene`, `check`, `finish`) on its own build plate, so your work is never touched. You watch it build live and can take the result over or stop it mid-run.
 - **Live printer status** — state, nozzle and bed temperatures, Wi-Fi signal, and during a print the progress bar, layer count and time left, read straight off the printer over MQTT.
 - **Printer camera** — the A1 has no RTSP; its chamber camera speaks a small protocol on port 6000. The server relays it as an MJPEG stream, so a plain `<img>` shows it live with no JavaScript.
+- **Material estimate** — grams, filament length, print time, layer count and cost, sliced with your current settings. The slice is cached, so hitting print right after costs nothing extra.
 - **Server-side printability checks** — connectivity, floating bodies, holes larger than the part, walls too thin.
 
 Works with DeepSeek, any OpenAI-compatible endpoint (OpenRouter, Groq, Together), local Ollama, or Anthropic.

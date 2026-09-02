@@ -429,8 +429,9 @@ function updateDims(){
   const over = s.x > BED || s.z > BED || s.y > BED;
   const sunk = box.min.y < -0.2;
   const warn = shellWarning();
-  $('dims').textContent = `${s.x.toFixed(1)} × ${s.z.toFixed(1)} × ${s.y.toFixed(1)} мм · стол A1 256×256×256`
-    + (over ? ' · НЕ ВЛЕЗАЕТ' : '') + (sunk ? ' · ниже стола' : '') + warn;
+  $('dims').textContent = `${s.x.toFixed(1)} × ${s.z.toFixed(1)} × ${s.y.toFixed(1)}`
+    + t(' мм · стол A1 256×256×256')
+    + (over ? t(' · НЕ ВЛЕЗАЕТ') : '') + (sunk ? t(' · ниже стола') : '') + warn;
   $('dims').style.color = over || sunk || warn ? 'var(--danger)' : '';
 }
 
@@ -551,6 +552,28 @@ function stlText(){
   if(!m){ say('нет ни одного тела', 'err'); return null; }
   return meshToStl(m);
 }
+
+$('estimate').onclick = async e => {
+  const out = stlText(); if(!out) return;
+  const btn = e.currentTarget, box = $('est');
+  btn.disabled = true; btn.textContent = t('считаем…'); say(t('слайсим, чтобы посчитать расход'));
+  try{
+    const r = await fetch('/estimate', {method:'POST', body: out, headers:{
+      'x-support': $('sup').checked ? '1' : '0', 'x-infill': $('infill').value,
+      'x-pattern': $('pattern').value, 'x-walls': $('walls').value}});
+    const j = await r.json();
+    if(j.error) throw new Error(j.error);
+    const h = Math.floor(j.seconds/3600), m = Math.round(j.seconds%3600/60);
+    box.hidden = false;
+    box.innerHTML = `<b style="color:var(--ink);font-size:13px">${j.grams} ${t('г пластика')}</b>`
+      + `<br>${t('время печати')} ${h} ${t('ч')} ${m} ${t('мин')} · ${j.layers} ${t('слоёв')}`
+      + `<br>${t('филамента')} ${j.length_m} ${t('м')} · ${j.volume_cm3} ${t('см³')}`
+      + (j.cost ? `<br>${t('материал на')} ${j.cost} $` : '')
+      + `<br><span style="color:#5c626e">${j.material} · ${j.density} ${t('г/см³')} · Ø${j.diameter} ${t('мм пруток')}</span>`;
+    say(`${j.grams} ${t('г')} · ${h}${t('ч')} ${m}${t('мин')}`, 'ok');
+  }catch(err){ say(t('не удалось посчитать: ') + err.message, 'err'); }
+  btn.disabled = false; btn.textContent = t('Сколько уйдёт пластика');
+};
 
 $('stl').onclick = () => { const out = stlText(); if(!out) return;
   const a = document.createElement('a');

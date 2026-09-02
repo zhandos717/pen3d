@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Мост браузер -> Bambu Lab A1 в LAN Mode: STL -> слайс -> FTPS -> MQTT print."""
-import ftplib, itertools, json, os, re, socket, ssl, struct, subprocess, sys, tempfile, time, uuid
+import ftplib, itertools, json, math, os, re, socket, ssl, struct, subprocess, sys, tempfile, time, uuid
 
 import db
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -401,6 +401,50 @@ def cfg():
         return json.load(f)
 
 
+DENSITY = {'PLA': 1.24, 'PETG': 1.27, 'ABS': 1.04, 'ASA': 1.07, 'TPU': 1.21,
+           'PC': 1.20, 'PA': 1.15, 'PVA': 1.23, 'HIPS': 1.04}
+
+
+def filament_facts():
+    """Плотность и диаметр берём из профиля филамента, а не из константы:
+    PLA и ABS различаются на 20%, а на 2.85-мм прутке площадь сечения втрое больше."""
+    name = os.path.basename(PRESETS['filament'])
+    material = next((m for m in DENSITY if m in name.upper()), None)
+    dens, dia, cost, guessed = DENSITY.get(material, DENSITY['PLA']), 1.75, 0.0, material is None
+    try:
+        with open(PRESETS['filament']) as f:
+            prof = json.load(f)
+        chain = [prof]
+        base = prof.get('inherits')
+        while base:                                  # плотность живёт в базовом профиле
+            path = os.path.join(os.path.dirname(PRESETS['filament']), base + '.json')
+            if not os.path.exists(path):
+                break
+            with open(path) as f:
+                prof = json.load(f)
+            chain.append(prof)
+            base = prof.get('inherits')
+        for prof in chain:
+            d = float((prof.get('filament_density') or [0])[0] or 0)
+            if d:
+                dens, guessed = d, False
+                break
+        for prof in chain:
+            dd = float((prof.get('filament_diameter') or [0])[0] or 0)
+            if dd:
+                dia = dd
+                break
+        for prof in chain:
+            c = float((prof.get('filament_cost') or [0])[0] or 0)
+            if c:
+                cost = c
+                break
+    except (OSError, ValueError, KeyError, IndexError):
+        pass
+    return {'material': material or 'PLA', 'density': dens, 'diameter': dia,
+            'cost_per_kg': cost, 'density_guessed': guessed}
+
+
 def process_preset(outdir, support, infill=None, pattern=None, walls=None):
     """Поддержки и заполнение живут в профиле процесса, у CLI флагов для них нет."""
     if not (support or infill or pattern or walls):
@@ -420,6 +464,27 @@ def process_preset(outdir, support, infill=None, pattern=None, walls=None):
     with open(path, 'w') as f:
         json.dump(p, f)
     return path
+
+
+SLICE_CACHE = {}
+
+
+def sliced(stl_bytes, support, infill, pattern, walls):
+    """Слайс идёт ~20 секунд, а «оценить» и «печатать» просят одно и то же —
+    держим последний результат по хэшу модели и настроек."""
+    import hashlib
+    key = hashlib.sha1(stl_bytes).hexdigest() + f'|{support}|{infill}|{pattern}|{walls}'
+    hit = SLICE_CACHE.get(key)
+    if hit and os.path.exists(hit[0]):
+        return hit
+    td = tempfile.mkdtemp(prefix='pen3d-')
+    sp = os.path.join(td, 'model.stl')
+    with open(sp, 'wb') as f:
+        f.write(stl_bytes)
+    mf = slice_stl(sp, td, support, infill, pattern, walls)
+    SLICE_CACHE.clear()                     # держим только последний, иначе /tmp растёт
+    SLICE_CACHE[key] = (mf, td)
+    return mf, td
 
 
 def slice_stl(stl_path, outdir, support=False, infill=None, pattern=None, walls=None):
@@ -655,16 +720,21 @@ class H(BaseHTTPRequestHandler):
             return self.do_agent(json.loads(body))
         stl = body
         support = self.headers.get('x-support') == '1'
+        if self.path.rstrip('/').endswith('/estimate'):
+            try:
+                return self._send(200, self.do_estimate(
+                    stl, support, self.headers.get('x-infill'),
+                    self.headers.get('x-pattern'), self.headers.get('x-walls')))
+            except Exception as e:
+                return self._send(500, {'error': f'{type(e).__name__}: {e}'})
         infill = self.headers.get('x-infill')
         pattern = self.headers.get('x-pattern')
         walls = self.headers.get('x-walls')
         do_print = self.path.rstrip('/').endswith('/print')
         try:
             c = cfg()
-            with tempfile.TemporaryDirectory() as td:
-                sp = os.path.join(td, 'model.stl')
-                open(sp, 'wb').write(stl)
-                mf = slice_stl(sp, td, support, infill, pattern, walls)
+            mf, _td = sliced(stl, support, infill, pattern, walls)
+            if True:
                 name = f'pen3d-{uuid.uuid4().hex[:6]}.3mf'
                 upload(mf, name, c['ip'], c['code'])
                 if do_print:
@@ -699,6 +769,31 @@ class H(BaseHTTPRequestHandler):
 
     def do_ai_log(self):
         self._send(200, {'rows': db.log_rows()})
+
+    def do_estimate(self, stl, support, infill, pattern, walls):
+        """Bambu CLI оставляет вес и плотность нулевыми, поэтому берём длину прутка
+        из gcode и считаем массу сами — из профиля филамента."""
+        import zipfile
+        mf, td = sliced(stl, support, infill, pattern, walls)
+        z = zipfile.ZipFile(mf)
+        g = z.read('Metadata/plate_1.gcode').decode('utf-8', 'replace')
+        info = z.read('Metadata/slice_info.config').decode('utf-8', 'replace')
+
+        def num(pat, text, default=0.0):
+            m = re.search(pat, text, re.I | re.M)
+            return float(m.group(1)) if m else default
+
+        length = num(r'total filament length \[mm\]\s*[:=]\s*([\d.]+)', g)
+        seconds = num(r'key="prediction" value="(\d+)"', info)
+        layers = num(r'total layer number:\s*(\d+)', g)
+        f = filament_facts()
+        volume_mm3 = length * math.pi * (f['diameter'] / 2) ** 2
+        grams = volume_mm3 / 1000 * f['density']
+        return {'grams': round(grams, 1), 'length_m': round(length / 1000, 2),
+                'volume_cm3': round(volume_mm3 / 1000, 1), 'seconds': int(seconds),
+                'layers': int(layers), 'support': support, 'infill': infill,
+                'cost': round(grams / 1000 * f['cost_per_kg'], 2) if f['cost_per_kg'] else None,
+                **f}                       # длина, диаметр, плотность и материал — чтобы цифру можно было проверить
 
     def do_agent_stream(self, req_body):
         """Шаги агента уходят в браузер по мере работы — видно, что он делает."""
