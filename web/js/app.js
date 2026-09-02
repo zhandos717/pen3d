@@ -33,23 +33,54 @@ function makePlate(offset, tint){
   const b = new THREE.Mesh(new THREE.PlaneGeometry(BED, BED),
     new THREE.MeshStandardMaterial({color:tint, roughness:1}));
   b.rotation.x = -Math.PI/2; b.position.y = -0.05; g.add(b);
-  g.add(new THREE.GridHelper(BED, BED/10, 0x3a4150, 0x262b35));
+  const grid = new THREE.GridHelper(BED, BED/10, 0x3a4150, 0x262b35); g.add(grid);
   const g5 = new THREE.GridHelper(BED, BED/50, 0x4a5262, 0x4a5262); g5.position.y = .02; g.add(g5);
-  scene.add(g); return g;
+  const h = BED/2, y = .06;
+  const edge = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(
+    [[-h,y,-h],[h,y,-h],[h,y,h],[-h,y,h]].map(q => new THREE.Vector3(...q))),
+    new THREE.LineBasicMaterial({color:0x2dd4a7}));
+  g.add(edge);
+  scene.add(g);
+  return {group:g, plate:b, grid, edge, tint};
 }
-makePlate(0, 0x1c2028);
-makePlate(PLATE_GAP, 0x1a2431);          // стол агента
+const plates = [makePlate(0, 0x1c2028), makePlate(PLATE_GAP, 0x1a2431)];
+
+// видно, какой стол уедет в печать
+function markPlates(){
+  const active = printPlate();
+  plates.forEach((p, i) => {
+    const on = i === active;
+    p.edge.visible = on;
+    p.plate.material.color.setHex(on ? (i ? 0x213041 : 0x252c37) : p.tint);
+    p.grid.material.transparent = !on; p.grid.material.opacity = on ? 1 : .4;
+  });
+}
 
 const orbit = new OrbitControls(cam, view);
 orbit.enableDamping = true; orbit.dampingFactor = .12; orbit.maxPolarAngle = Math.PI/2 - .02;
 orbit.mouseButtons = {LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN};
+
+orbit.addEventListener('start', () => fly = null);
 
 const gizmo = new TransformControls(cam, view);
 gizmo.setTranslationSnap(1); gizmo.setRotationSnap(THREE.MathUtils.degToRad(15)); gizmo.setScaleSnap(.05);
 scene.add(gizmo.getHelper());
 let dragged = false;
 gizmo.addEventListener('dragging-changed', e => { orbit.enabled = !e.value && !sketching; if(e.value) dragged = true; else gizmoDone(); });
-gizmo.addEventListener('objectChange', () => { const o = sel(); if(o){ meshToObj(o); objToMesh(o, meshOf(o.id)); fillProps(); updateDims(); } });
+gizmo.addEventListener('objectChange', () => {
+  const o = sel(); if(!o) return;
+  const was = {x:o.x, y:o.y, z:o.z};
+  meshToObj(o); objToMesh(o, meshOf(o.id));
+  if(o.grp && gizmo.getMode() === 'translate'){
+    const dx = o.x - was.x, dy = o.y - was.y, dz = o.z - was.z;
+    objects.forEach(x => {
+      if(x.grp !== o.grp || x === o) return;
+      x.x = +(x.x + dx).toFixed(2); x.y = +(x.y + dy).toFixed(2); x.z = +(x.z + dz).toFixed(2);
+      const m = meshOf(x.id); if(m) objToMesh(x, m);
+    });
+  }
+  fillProps(); updateDims();
+});
 
 const raw = new THREE.Group(); scene.add(raw);
 let resultMesh = null, showResult = false;
@@ -122,7 +153,8 @@ function sync(){
 // ---------- CSG результат ----------
 function rebuild(){
   if(resultMesh){ kill(resultMesh); resultMesh = null; }
-  try{ resultMesh = buildResult(objects.filter(o => !o.plate), (o,b) => objToMesh({...o, plate:0}, b), MAT.result); }
+  try{ resultMesh = buildResult(objects.filter(o => (o.plate || 0) === printPlate()),
+                                (o,b) => objToMesh({...o, plate: printPlate()}, b), MAT.result); }
   catch(e){ showResult = false; $('result').classList.remove('on'); say('не удалось собрать: ' + e.message, 'err'); sync(); return; }
   if(resultMesh) scene.add(resultMesh);
 }
@@ -138,7 +170,7 @@ const snapshot = () => JSON.stringify({objects, nextId});
 // push() — состояние ДО изменения; вызывать перед мутацией objects
 function push(){ hist.push(snapshot()); if(hist.length > 100) hist.shift(); redoStack.length = 0; }
 function restore(s){
-  const d = JSON.parse(s);
+  const d = typeof s === 'string' ? JSON.parse(s) : s;   // из истории приходит строка, из базы — объект
   if(!Array.isArray(d?.objects)) throw new Error('битый файл проекта');
   objects = d.objects; nextId = +d.nextId || Math.max(0, ...objects.map(o => o.id)) + 1;
   if(!byId(selId)) selId = null;
@@ -154,8 +186,15 @@ function gizmoDone(){
 }
 
 // ---------- сохранение ----------
-function persist(){ try{ localStorage.pen3d = snapshot(); }catch(e){} }
-function load(){ try{ if(localStorage.pen3d) restore(localStorage.pen3d); }catch(e){ objects = []; say('сохранённый проект повреждён, начат новый', 'err'); } }
+// sync() дёргается на каждое движение гизмо, поэтому пишем в базу не чаще раза в 400 мс
+let saveTimer = null;
+function persist(){
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    fetch('/api/scene', {method:'POST', headers:{'content-type':'application/json'}, body: snapshot()})
+      .catch(() => say('сцена не сохранилась — сервер не отвечает', 'err'));
+  }, 400);
+}
 $('save').onclick = () => {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([snapshot()], {type:'application/json'}));
@@ -219,7 +258,8 @@ function renderList(){
   $('empty').hidden = objects.length > 0;
   [...objects].reverse().forEach(o => {
     const row = document.createElement('div');
-    row.className = 'obj' + (o.id === selId ? ' sel' : '') + (o.hole ? ' hole' : '') + (o.vis ? '' : ' hidden');
+    row.className = 'obj' + (o.id === selId ? ' sel' : '') + (o.hole ? ' hole' : '')
+                  + (o.vis ? '' : ' hidden') + (o.grp ? ' grp' : '');
     row.dataset.id = o.id;
     row.innerHTML = `<span class="sw" style="background:${o.hole ? '' : esc(o.color || '#2dd4a7')}"></span><span class="nm">${esc(o.name)}</span>
       <button title="отверстие / тело">${o.hole ? '⊖' : '⊕'}</button><button title="видимость">${o.vis ? '👁' : '—'}</button>`;
@@ -269,7 +309,12 @@ P.forEach(k => {
     if(k === 'rot' || k === 'rx' || k === 'rz') v = ((v % 360) + 360) % 360;
     if(k === 'name' && !v) return;
     if(o[k] === v) return;
-    push(); o[k] = v; sync(); };
+    push();
+    if(o.grp && 'xyz'.includes(k) && k.length === 1){
+      const d = v - o[k];
+      objects.forEach(x => { if(x.grp === o.grp && x !== o) x[k] = +(x[k] + d).toFixed(2); });
+    }
+    o[k] = v; sync(); };
 });
 
 // выравнивание: угол к ближайшим 90°, деталь обратно на стол
@@ -296,7 +341,7 @@ $('drop').onclick = () => {
 };
 
 function updateDims(){
-  const vis = objects.filter(o => o.vis && !o.hole && !o.plate);
+  const vis = objects.filter(o => o.vis && !o.hole && (o.plate || 0) === printPlate());
   if(!vis.length){ $('dims').textContent = ''; return; }
   const box = new THREE.Box3();
   vis.forEach(o => { const m = meshOf(o.id); if(m){ m.updateMatrixWorld(); box.expandByObject(m); } });
@@ -374,14 +419,30 @@ function finishSketch(p){
 }
 
 // ---------- виды ----------
+// перелёт между столами: скучный мгновенный прыжок сбивает ориентацию
+let fly = null;
+function focusPlate(x = printPlate() * PLATE_GAP, dur = 550){
+  const dx = x - orbit.target.x;
+  if(Math.abs(dx) < .01) return;
+  fly = {t0: performance.now(), dur, tx: orbit.target.x, cx: cam.position.x, dx};
+}
+function stepFly(){
+  if(!fly) return;
+  const k = Math.min(1, (performance.now() - fly.t0) / fly.dur);
+  const e = k < .5 ? 4*k*k*k : 1 - Math.pow(-2*k + 2, 3)/2;   // ease-in-out
+  orbit.target.x = fly.tx + fly.dx*e;
+  cam.position.x = fly.cx + fly.dx*e;
+  if(k >= 1) fly = null;
+}
+
 function setView(v){
-  const t = new THREE.Vector3(0, 20, 0); orbit.target.copy(t);
+  const t = new THREE.Vector3(printPlate() * PLATE_GAP, 20, 0); orbit.target.copy(t);
   const r = 320;
-  if(v === 'top') cam.position.set(0, r, 0.001);
-  if(v === 'front') cam.position.set(0, 40, r);
-  if(v === 'side') cam.position.set(r, 40, 0);
-  if(v === 'iso') cam.position.set(220, 200, 260);
-  cam.lookAt(t); orbit.update();
+  if(v === 'top') cam.position.set(t.x, r, 0.001);
+  if(v === 'front') cam.position.set(t.x, 40, r);
+  if(v === 'side') cam.position.set(t.x + r, 40, 0);
+  if(v === 'iso') cam.position.set(t.x + 220, 200, 260);
+  cam.lookAt(t); orbit.update(); fly = null;
 }
 document.querySelectorAll('[data-view]').forEach(b => b.onclick = () => setView(b.dataset.view));
 
@@ -399,11 +460,12 @@ addEventListener('keydown', e => {
 });
 
 // ---------- экспорт ----------
+const printPlate = () => +$('plate-print').value;
 function stlText(){
   let m;
-  const mine = objects.filter(o => !o.plate);
-  if(!mine.length && objects.length) say('на твоём столе пусто — забери деталь у агента', 'err');
-  try{ m = buildResult(mine, (o, b) => objToMesh({...o, plate:0}, b), MAT.result); }
+  const on = objects.filter(o => (o.plate || 0) === printPlate());
+  if(!on.length) say(printPlate() ? 'стол агента пуст' : 'твой стол пуст', 'err');
+  try{ m = buildResult(on, (o, b) => objToMesh({...o, plate:0}, b), MAT.result); }
   catch(e){ say('не удалось собрать: ' + e.message, 'err'); return null; }
   if(!m){ say('нет ни одного тела', 'err'); return null; }
   return meshToStl(m);
@@ -504,8 +566,10 @@ async function loadLog(){
 $('log-refresh').onclick = loadLog;
 loadLog();
 
-// расход токенов за сессию
-const tok = JSON.parse(localStorage.tokens || '{"in":0,"out":0,"calls":0}');
+// расход токенов, копится в базе
+const tok = {in:0, out:0, calls:0};
+const saveTokens = () => fetch('/api/tokens', {method:'POST', headers:{'content-type':'application/json'},
+                                               body: JSON.stringify(tok)}).catch(() => {});
 function showTokens(){
   $('tokens').textContent = tok.calls
     ? `запросов ${tok.calls} · ввод ${tok.in.toLocaleString('ru')} · ответ ${tok.out.toLocaleString('ru')} · всего ${(tok.in+tok.out).toLocaleString('ru')}`
@@ -514,18 +578,36 @@ function showTokens(){
 function addTokens(u){
   if(!u) return;
   tok.in += u.prompt_tokens || 0; tok.out += u.completion_tokens || 0; tok.calls++;
-  localStorage.tokens = JSON.stringify(tok); showTokens();
+  saveTokens(); showTokens();
 }
 $('tokens-reset').onclick = () => { tok.in = tok.out = tok.calls = 0;
-  localStorage.tokens = JSON.stringify(tok); showTokens(); say('счётчик сброшен'); };
+  saveTokens(); showTokens(); say('счётчик сброшен'); };
 showTokens();
+
+$('plate-print').onchange = () => { updateDims(); markPlates(); focusPlate(); if(showResult) rebuild();
+  say(printPlate() ? 'печатаем стол агента' : 'печатаем твой стол'); };
 
 $('take').onclick = () => {
   const theirs = objects.filter(o => o.plate);
   if(!theirs.length) return say('у агента пусто', 'err');
   push();
-  objects = objects.filter(o => !o.plate).concat(theirs.map(o => ({...o, plate:0})));
-  selId = null; sync(); say(`забрано со стола агента: ${theirs.length}`, 'ok');
+  const mine = objects.filter(o => !o.plate && o.vis);
+  const right = mine.length ? Math.max(...mine.map(o => o.x + o.w/2)) : -1e9;
+  const left = Math.min(...theirs.map(o => o.x - o.w/2));
+  const shift = mine.length ? +(right + 10 - left).toFixed(1) : 0;
+  const grp = 'g' + Date.now();
+  objects = objects.filter(o => !o.plate)
+    .concat(theirs.map(o => ({...o, plate:0, grp, x: +(o.x + shift).toFixed(2)})));
+  selId = null; sync();
+  say(`забрано со стола агента: ${theirs.length} · двигаются вместе, «Разгруппировать» разрывает связь`, 'ok');
+};
+
+$('ungroup').onclick = () => {
+  const o = sel(); if(!o) return say('выбери фигуру', 'err');
+  if(!o.grp) return say('фигура и так сама по себе');
+  const n = objects.filter(x => x.grp === o.grp).length;
+  push(); objects.forEach(x => { if(x.grp === o.grp) delete x.grp; });
+  sync(); say(`группа из ${n} тел разорвана`);
 };
 $('wipe-agent').onclick = () => {
   if(!objects.some(o => o.plate)) return say('у агента пусто');
@@ -580,8 +662,23 @@ $('gen').onclick = async e => {
 };
 
 // ---------- библиотека эскизов ----------
-const libGet = () => { try{ return JSON.parse(localStorage.pen3dLib) || []; }catch(e){ return []; } };
-const libSet = l => { localStorage.pen3dLib = JSON.stringify(l); renderLib(); };
+// эскизы живут в базе; здесь их копия, чтобы renderLib оставалась синхронной
+let lib = [];
+const libGet = () => lib;
+async function libReload(){
+  try{ lib = (await (await fetch('/api/state')).json()).sketches || []; }catch(e){ lib = []; }
+  renderLib();
+}
+async function libAdd(s){
+  const r = await fetch('/api/sketches', {method:'POST', headers:{'content-type':'application/json'},
+                                          body: JSON.stringify(s)});
+  if(!r.ok) throw new Error('сервер не принял эскиз');
+  await libReload();
+}
+async function libDel(id){
+  await fetch('/api/sketches/' + id, {method:'POST'});
+  await libReload();
+}
 
 function sketchSvg(pts){
   const d = pts.map((p, i) => `${i ? 'L' : 'M'}${(p[0]*100).toFixed(1)} ${(-p[1]*100).toFixed(1)}`).join(' ') + ' Z';
@@ -600,7 +697,7 @@ function renderLib(){
       showTab('props'); say('поставлен эскиз: ' + it.name);
     };
     c.querySelector('.x').onclick = e => { e.stopPropagation();
-      const l2 = libGet(); l2.splice(i, 1); libSet(l2); say('эскиз удалён'); };
+      libDel(it.id).then(() => say('эскиз удалён')); };
     box.appendChild(c);
   });
 }
@@ -608,8 +705,9 @@ $('lib-add').onclick = () => {
   const o = sel();
   if(!o || o.type !== 'sketch') return say('выбери эскиз на сцене или в списке объектов', 'err');
   const name = prompt('Имя эскиза:', o.name); if(!name) return;
-  libSet([...libGet(), {name, pts: o.pts.map(p => p.slice()), w: o.w, d: o.d, h: o.h}]);
-  say('эскиз сохранён: ' + name, 'ok');
+  libAdd({name, pts: o.pts.map(p => p.slice()), w: o.w, d: o.d, h: o.h})
+    .then(() => say('эскиз сохранён: ' + name, 'ok'))
+    .catch(err => say(err.message, 'err'));
 };
 $('lib-export').onclick = () => {
   const a = document.createElement('a');
@@ -622,12 +720,12 @@ $('libfile').onchange = async e => {
   try{
     const l = JSON.parse(await f.text());
     if(!Array.isArray(l)) throw new Error('это не библиотека эскизов');
-    libSet([...libGet(), ...l.filter(x => Array.isArray(x?.pts))]);
-    say(`добавлено эскизов: ${l.length}`, 'ok');
+    const good = l.filter(x => Array.isArray(x?.pts));
+    for(const it of good) await libAdd(it);
+    say(`добавлено эскизов: ${good.length}`, 'ok');
   }catch(err){ say('импорт не удался: ' + err.message, 'err'); }
   e.target.value = '';
 };
-renderLib();
 
 // ---------- размеры в сцене ----------
 const labels = $('labels');
@@ -651,6 +749,12 @@ function drawLabels(){
     label(i++, `${t}`, V(t, 0, half + 8), 'bed');
     label(i++, `${-t}`, V(-half - 8, 0, t), 'bed');
   }
+  // подписи столов: видно, какой печатается
+  const act = printPlate();
+  label(i++, act === 0 ? 'МОЙ СТОЛ · в печать' : 'мой стол', V(0, 0, -BED/2 - 14), act === 0 ? '' : 'bed');
+  label(i++, act === 1 ? 'СТОЛ АГЕНТА · в печать' : 'стол агента',
+        V(PLATE_GAP, 0, -BED/2 - 14), act === 1 ? '' : 'bed');
+
   // размеры выбранного объекта
   const o = sel(), m = o && meshOf(o.id);
   if(m && m.visible){
@@ -671,8 +775,45 @@ function loop(){
   if(view.width !== Math.round(w*dpr) || view.height !== Math.round(h*dpr)){
     renderer.setSize(w, h, false); cam.aspect = w/h; cam.updateProjectionMatrix(); }
   requestAnimationFrame(loop);
-  orbit.update(); renderer.render(scene, cam);
+  stepFly(); orbit.update(); renderer.render(scene, cam);
   try{ drawLabels(); }catch(e){ window.__lastErr = e.message + ' @ ' + (e.stack||'').split('\n')[1]; }
 }
-load(); sync(); loop();
-window.__dbg = () => ({objects, selId, hist: hist.length, redo: redoStack.length, meshes: raw.children.length, result: !!resultMesh});
+// всё состояние приезжает из базы одним запросом
+// Разовый переезд: что лежало в localStorage до появления базы, заливаем в базу.
+async function migrateLocal(st){
+  if(st.scene) return st;
+  let moved = 0;
+  try{
+    if(localStorage.pen3d){
+      const d = JSON.parse(localStorage.pen3d);
+      if(Array.isArray(d?.objects) && d.objects.length){
+        await fetch('/api/scene', {method:'POST', headers:{'content-type':'application/json'},
+                                   body: localStorage.pen3d});
+        st.scene = d; moved += d.objects.length;
+      }
+    }
+    for(const it of JSON.parse(localStorage.pen3dLib || '[]')){
+      if(Array.isArray(it?.pts)){ await libAdd(it); moved++; }
+    }
+    if(localStorage.tokens){
+      const t = JSON.parse(localStorage.tokens);
+      if(t?.calls){ Object.assign(tok, t); await saveTokens(); st.tokens = t; }
+    }
+  }catch(e){ say('перенос старых данных не удался: ' + e.message, 'err'); }
+  if(moved) say(`перенесено в базу: ${moved}`, 'ok');
+  return moved ? await (await fetch('/api/state')).json() : st;
+}
+
+async function boot(){
+  try{
+    let st = await (await fetch('/api/state')).json();
+    st = await migrateLocal(st);
+    if(st.scene) restore(st.scene);
+    lib = st.sketches || [];
+    Object.assign(tok, st.tokens || {});
+  }catch(e){ say('база недоступна, работаем без сохранения: ' + e.message, 'err'); }
+  renderLib(); showTokens(); sync();
+}
+boot(); markPlates(); loop();
+window.__dbg = () => ({objects, selId, hist: hist.length, redo: redoStack.length, meshes: raw.children.length,
+  result: !!resultMesh, plate: printPlate(), cam: [+cam.position.x.toFixed(1), +orbit.target.x.toFixed(1)]});

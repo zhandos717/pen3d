@@ -149,7 +149,7 @@ def check_scene(shapes):
     return problems
 
 
-def run_agent(task, scene, model, base, key):
+def run_agent(task, scene, model, base, key, on_event=None):
     """Цикл tool-use: модель строит деталь, проверяет её и правит сама."""
     import urllib.request
     shapes = [dict(o) for o in (scene or [])]
@@ -203,6 +203,8 @@ def run_agent(task, scene, model, base, key):
         req = urllib.request.Request(base + '/chat/completions', headers=headers,
             data=json.dumps({'model': model, 'max_tokens': 4000, 'tools': TOOLS,
                              'messages': messages}).encode())
+        if on_event:
+            on_event({'type': 'thinking', 'step': step})
         r = json.load(urllib.request.urlopen(req, timeout=180))
         for k in usage:
             usage[k] += (r.get('usage') or {}).get(k, 0)
@@ -232,6 +234,9 @@ def run_agent(task, scene, model, base, key):
             else:
                 result = call(fn, args)
             trace.append({'step': step, 'tool': fn, 'args': args, 'result': result})
+            if on_event:
+                on_event({'type': 'tool', 'step': step, 'tool': fn, 'args': args,
+                          'result': result, 'shapes': shapes})
             messages.append({'role': 'tool', 'tool_call_id': c['id'],
                              'content': json.dumps(result, ensure_ascii=False)})
         if done:
@@ -391,6 +396,8 @@ class H(BaseHTTPRequestHandler):
             return self._send(500, {'error': f'{type(e).__name__}: {e}'})
         if self.path.rstrip('/').endswith('/ai'):
             return self.do_ai(json.loads(body))
+        if self.path.rstrip('/').endswith('/agent/stream'):
+            return self.do_agent_stream(json.loads(body))
         if self.path.rstrip('/').endswith('/agent'):
             return self.do_agent(json.loads(body))
         stl = body
@@ -416,6 +423,36 @@ class H(BaseHTTPRequestHandler):
 
     def do_ai_log(self):
         self._send(200, {'rows': db.log_rows()})
+
+    def do_agent_stream(self, req_body):
+        """Шаги агента уходят в браузер по мере работы — видно, что он делает."""
+        self.send_response(200)
+        self.send_header('content-type', 'text/event-stream; charset=utf-8')
+        self.send_header('cache-control', 'no-store')
+        self.send_header('connection', 'close')
+        self.end_headers()
+
+        def push(ev):
+            try:
+                self.wfile.write(('data: ' + json.dumps(ev, ensure_ascii=False) + '\n\n').encode())
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                raise
+        try:
+            c = cfg() if os.path.exists(CFG) else {}
+            base = (req_body.get('base_url') or c.get('base_url') or 'https://api.deepseek.com').rstrip('/')
+            model = req_body.get('model') or c.get('model') or 'deepseek-chat'
+            key = req_body.get('key') or c.get('deepseek_key') or c.get('api_key') or ''
+            out = run_agent(req_body['task'], req_body.get('scene') or [], model, base, key, push)
+            log_ai(model, 'Деталь: ' + req_body['task'],
+                   json.dumps(out['objects'], ensure_ascii=False),
+                   dict(out['usage'], steps=len(out['trace'])))
+            push({'type': 'done', **out})
+        except Exception as e:
+            try:
+                push({'type': 'error', 'error': f'{type(e).__name__}: {e}'})
+            except Exception:
+                pass
 
     def do_agent(self, req_body):
         import urllib.request

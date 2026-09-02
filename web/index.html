@@ -110,6 +110,7 @@ code{font:11px ui-monospace,monospace;color:var(--dim)}
 .obj .sw{width:9px;height:9px;border-radius:2px;background:var(--accent);flex:none}
 .obj.hole .sw{background:#d0455f}
 .obj.hidden{opacity:.45}
+.obj.grp .nm::after{content:' ⛓';color:var(--dim);font-size:10px}
 .obj button{padding:1px 5px;font-size:11px;background:transparent;border-color:transparent;color:var(--dim)}
 .obj button:hover{color:var(--ink);background:#232733}
 </style>
@@ -262,6 +263,7 @@ code{font:11px ui-monospace,monospace;color:var(--dim)}
         </div>
         <div class="pair" style="margin-top:6px">
           <button class="sm" id="drop">Посадить на стол</button>
+          <button class="sm" id="ungroup">Разгруппировать</button>
           <button class="sm" id="sink" title="опустить отверстие на 1 мм ниже дна">Утопить снизу</button>
         </div>
         <div class="hint">X — вправо, Y — вглубь стола, «низ» — высота над столом. Центр стола 0,0.
