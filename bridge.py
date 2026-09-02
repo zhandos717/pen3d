@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Мост браузер -> Bambu Lab A1 в LAN Mode: STL -> слайс -> FTPS -> MQTT print."""
-import ftplib, json, os, socket, ssl, subprocess, sys, tempfile, time, uuid
+import ftplib, json, os, re, socket, ssl, subprocess, sys, tempfile, time, uuid
 
 import db
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -172,6 +172,52 @@ def trim_history(messages, keep=6, limit=60000, legacy=False):
     return messages
 
 
+# Шаг метрической резьбы по ГОСТ и размер под ключ для стандартного крепежа
+METRIC = {3: (0.5, 5.5), 4: (0.7, 7), 5: (0.8, 8), 6: (1.0, 10), 8: (1.25, 13),
+          10: (1.5, 17), 12: (1.75, 19), 14: (2.0, 22), 16: (2.0, 24), 20: (2.5, 30)}
+
+
+def _shape(name, type, **kw):
+    o = {'name': name, 'type': type, 'x': 0, 'y': 0, 'z': 0, 'w': 10, 'd': 10, 'h': 10,
+         'rot': 0, 'sides': 6, 'dia': 10, 'pitch': 1.5, 'hole': False}
+    o.update(kw)
+    if o['type'] == 'thread':
+        o['w'] = o['d'] = o['dia']
+    return o
+
+
+def from_template(task):
+    """Типовой крепёж собираем кодом: модель тут не нужна, а ошибиться она может.
+    Возвращает список тел или None, если задача не шаблонная."""
+    t = task.lower().replace('м', 'm').replace('х', 'x')
+    m = re.search(r'\bm\s*(\d{1,2})\b', t)
+    if not m:
+        return None
+    d = int(m.group(1))
+    if d not in METRIC:
+        return None
+    pitch, wrench = METRIC[d]
+    length = None
+    ln = re.search(r'(?:x|на|длин\w*)\s*(\d{2,3})\s*(?:мм)?', t)
+    if ln:
+        length = int(ln.group(1))
+
+    if 'гайк' in t or 'nut' in t:
+        h = round(d * 0.8)
+        return [_shape(f'гайка M{d}', 'poly', sides=6, w=wrench, d=wrench, h=h),
+                _shape('резьбовое отверстие', 'thread', dia=d + 0.3, pitch=pitch,
+                       h=h + 2, z=-1, hole=True)]
+    if 'болт' in t or 'винт' in t or 'bolt' in t or 'screw' in t:
+        L = length or d * 3
+        hh = round(d * 0.7)
+        return [_shape('головка', 'poly', sides=6, w=wrench, d=wrench, h=hh),
+                _shape(f'стержень M{d}', 'thread', dia=d, pitch=pitch, h=L, z=hh - 1)]
+    if 'шайб' in t or 'washer' in t:
+        return [_shape(f'шайба M{d}', 'cyl', w=d * 2.2, d=d * 2.2, h=max(1.6, d * 0.2)),
+                _shape('отверстие', 'cyl', w=d + 0.4, d=d + 0.4, h=d, z=-1, hole=True)]
+    return None
+
+
 def run_agent(task, scene, model, base, key, on_event=None, max_steps=10, legacy=False):
     """Цикл tool-use: модель строит деталь, проверяет её и правит сама.
 
@@ -219,6 +265,21 @@ def run_agent(task, scene, model, base, key, on_event=None, max_steps=10, legacy
             return {'ok': not p, 'problems': p}
         return {'error': 'неизвестный инструмент'}
 
+    journal = []          # что уже сделано, по строке на действие
+
+    def snapshot_messages():
+        """Приём из Multi-Agent-CAD: модель получает состояние, а не всю переписку.
+        Диалог не копится, поэтому расход на шаг не растёт с числом шагов."""
+        body = [f'Деталь: {task}', '',
+                'Тела на столе: ' + json.dumps(scene_report(shapes), ensure_ascii=False)]
+        if journal:
+            body += ['', 'Что уже сделано:'] + [f'  {i+1}. {j}' for i, j in enumerate(journal[-12:])]
+        problems = check_scene(shapes)
+        body += ['', 'Проверка: ' + ('замечаний нет' if not problems else '; '.join(problems))]
+        body += ['', 'Сделай следующий шаг. Если замечаний нет и деталь готова — вызови finish.']
+        return [{'role': 'system', 'content': AGENT_PROMPT},
+                {'role': 'user', 'content': '\n'.join(body)}]
+
     messages = [{'role': 'system', 'content': AGENT_PROMPT},
                 {'role': 'user', 'content': f'Деталь: {task}\n\nТекущая сцена: '
                                             f'{json.dumps(scene_report(shapes), ensure_ascii=False)}'}]
@@ -227,12 +288,25 @@ def run_agent(task, scene, model, base, key, on_event=None, max_steps=10, legacy
         headers['authorization'] = 'Bearer ' + key
 
     STOP['flag'] = False
+    tpl = None if (scene or legacy) else from_template(task)
+    if tpl:
+        for o in tpl:
+            o['id'] = next_id; next_id += 1
+            shapes.append(o)
+            if on_event:
+                on_event({'type': 'tool', 'step': 0, 'tool': 'add_shape',
+                          'args': {'name': o['name']}, 'result': {'id': o['id']}, 'shapes': shapes})
+        trace.append({'step': 0, 'tool': 'template', 'args': {'task': task},
+                      'result': {'bodies': len(tpl)}})
+        return {'objects': shapes, 'trace': trace, 'problems': check_scene(shapes),
+                'usage': usage, 'stopped': False, 'template': True}
+
     for step in range(max_steps):
         if STOP['flag']:
             trace.append({'step': step, 'stopped': True})
             break
         body = {'model': model, 'max_tokens': 4000, 'tools': TOOLS,
-                'messages': trim_history(messages, legacy=legacy)}
+                'messages': trim_history(messages, legacy=legacy) if legacy else snapshot_messages()}
         if not legacy:
             body['temperature'] = 0
         req = urllib.request.Request(base + '/chat/completions', headers=headers,
@@ -245,13 +319,16 @@ def run_agent(task, scene, model, base, key, on_event=None, max_steps=10, legacy
             usage[k] += u.get(k, 0)
         usage['steps'] = step + 1
         msg = r['choices'][0]['message']
-        messages.append(msg)
+        if legacy:
+            messages.append(msg)
         calls = msg.get('tool_calls') or []
         if not calls:
             text = msg.get('content') or ''
             trace.append({'step': step, 'text': text[:200]})
-            messages.append({'role': 'user', 'content': 'Работай только инструментами. '
-                             'Если деталь готова — вызови check, затем finish.'})
+            journal.append('ответил текстом вместо инструмента — так нельзя')
+            if legacy:
+                messages.append({'role': 'user', 'content': 'Работай только инструментами. '
+                                 'Если деталь готова — вызови check, затем finish.'})
             continue
         done = False
         for c in calls:
@@ -270,11 +347,16 @@ def run_agent(task, scene, model, base, key, on_event=None, max_steps=10, legacy
             else:
                 result = call(fn, args)
             trace.append({'step': step, 'tool': fn, 'args': args, 'result': result})
+            if fn not in ('get_scene', 'check'):
+                short = ', '.join(f'{k}={v}' for k, v in args.items() if k != 'name')
+                journal.append(f"{fn}: {args.get('name', args.get('id', ''))} {short}".strip()
+                               + (f" → {result.get('error')}" if result.get('error') else ''))
             if on_event:
                 on_event({'type': 'tool', 'step': step, 'tool': fn, 'args': args,
                           'result': result, 'shapes': shapes})
-            messages.append({'role': 'tool', 'tool_call_id': c['id'],
-                             'content': json.dumps(result, ensure_ascii=False)})
+            if legacy:
+                messages.append({'role': 'tool', 'tool_call_id': c['id'],
+                                 'content': json.dumps(result, ensure_ascii=False)})
         if done:
             break
 
@@ -628,6 +710,23 @@ class H(BaseHTTPRequestHandler):
         pass
 
 
+def selfcheck_templates():
+    """Шаблоны собираются без модели, поэтому ошибку в них никто не поймает
+    до самой печати — гоняем через ту же проверку, что и работу агента."""
+    cases = ['гайка M14', 'болт M8 на 40 мм', 'шайба M10', 'винт M6 длиной 25']
+    for t in cases:
+        bodies = from_template(t)
+        assert bodies, f'шаблон не сработал: {t}'
+        for i, o in enumerate(bodies):
+            o['id'] = i + 1
+        problems = check_scene(bodies)
+        assert not problems, f'{t}: {problems}'
+        print(f'  {t:22} тел {len(bodies)}  ok')
+    assert from_template('подставка под телефон') is None, 'шаблон сработал на нешаблонной задаче'
+    assert from_template('гайка M7') is None, 'M7 нет в таблице, шаблон не должен срабатывать'
+    print('шаблоны: ок')
+
+
 def selfcheck():
     """Слайсер жив и отдаёт валидный 3mf с gcode внутри."""
     import zipfile
@@ -652,7 +751,7 @@ def selfcheck():
 
 if __name__ == '__main__':
     if '--selfcheck' in sys.argv:
-        selfcheck(); sys.exit()
+        selfcheck_templates(); selfcheck(); sys.exit()
     if not os.path.exists(CFG):
         print(f'! Нет {CFG} — рисовать и качать STL можно, печать и AI не будут работать.\n'
               '  Создай: {"ip":"192.168.1.50","code":"12345678","serial":"01P00A...","deepseek_key":"sk-..."}\n'
