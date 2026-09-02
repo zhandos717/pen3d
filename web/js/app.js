@@ -995,12 +995,33 @@ function label(i, text, v, cls){
   if(p.z > 1){ el.style.display = 'none'; return; }
   el.style.display = ''; el.className = cls || '';
   el.textContent = text;
-  el.style.left = (p.x * .5 + .5) * labels.clientWidth + 'px';
-  el.style.top  = (-p.y * .5 + .5) * labels.clientHeight + 'px';
+  const x = (p.x * .5 + .5) * labels.clientWidth, y = (-p.y * .5 + .5) * labels.clientHeight;
+  el.style.left = x + 'px';
+  el.style.top  = y + 'px';
+  placed.push({el, x, y});
 }
+
+// У мелкой детали все подписи проецируются почти в одну точку: «в детали 5.5 мм»
+// и «снаружи 1.5 мм» отличались на пиксель и читались как каша. Разводим по вертикали.
+const ROW = 15;
+function spread(){
+  placed.sort((a, b) => a.y - b.y);
+  for(let i = 1; i < placed.length; i++){
+    const cur = placed[i];
+    for(let j = 0; j < i; j++){
+      const prev = placed[j];
+      if(Math.abs(cur.x - prev.x) < 70 && cur.y - prev.y < ROW){
+        cur.y = prev.y + ROW;
+        cur.el.style.top = cur.y + 'px';
+      }
+    }
+  }
+}
+const placed = [];
 const V = (x,y,z) => new THREE.Vector3(x,y,z);
 function drawLabels(){
   let i = 0;
+  placed.length = 0;
   const half = BED/2;
   // разметка стола
   for(const t of [-half, -half/2, 0, half/2, half]){
@@ -1063,6 +1084,7 @@ function drawLabels(){
     if(o.z > 0.05) label(i++, `↑ ${o.z} мм`, V(b.min.x - 3, o.z/2, b.max.z));
   }
   for(; i < pool.length; i++) pool[i].style.display = 'none';
+  spread();
 }
 
 // ---------- цикл ----------
