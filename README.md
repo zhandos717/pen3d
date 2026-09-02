@@ -1,52 +1,41 @@
 # pen3d
 
-Локальный 3D-редактор для печати на Bambu Lab A1 напрямую из браузера, без облака Bambu.
+Browser-based 3D editor that slices and prints to a **Bambu Lab A1 over your LAN** — no Bambu Cloud, no account, no vendor app. Model a part, hit print, watch it come out.
 
-> Browser-based 3D editor that slices and prints to a Bambu Lab A1 over LAN, no Bambu Cloud involved.
+An optional AI agent builds parts for you: it places primitives step by step, checks its own work against printability rules, and fixes what it finds.
 
-## Структура
+*[Русская версия](README.ru.md)*
 
-```
-bridge.py              локальный сервер: раздаёт web/, слайсит STL, печатает
-db.py                  SQLite: сцена, библиотека эскизов, лог ИИ, счётчик токенов
-pen3d.db               база (создаётся при первом запуске, в git не хранится)
-web/
-  index.html           3D-редактор (примитивы, AI-помощник)
-  icon.svg             иконка
-  editor-2d-old.html   старая 2D-версия
-```
+## What it does
 
-Сервер отдаёт наружу только содержимое `web/` — `bridge.py`, `ai-log.jsonl` и конфиг по HTTP недоступны.
+- **Model in the browser** — box, cylinder, prism, sphere, cone, torus, wedge and real metric threads; freehand sketches extruded into solids; booleans (any body can become a hole).
+- **Slice and print over LAN** — the editor sends STL to a local Python server, which slices via the Bambu Studio CLI, uploads the `.3mf` over FTPS and starts the print over MQTT.
+- **AI agent** — describe the part in plain language; the agent works with tools (`add_shape`, `update_shape`, `delete_shape`, `get_scene`, `check`, `finish`) on its own build plate, so your work is never touched. You watch it build live and can take the result over or stop it mid-run.
+- **Server-side printability checks** — connectivity, floating bodies, holes larger than the part, walls too thin.
 
-## Запуск
+Works with DeepSeek, any OpenAI-compatible endpoint (OpenRouter, Groq, Together), local Ollama, or Anthropic.
 
-Нужны macOS с установленной Bambu Studio (для CLI-слайсинга) и Python 3.11+.
+## Requirements
 
-```
+- macOS with [Bambu Studio](https://bambulab.com/en/download/studio) installed — used headless for slicing
+- Python 3.11+
+- A Bambu Lab A1 in **LAN Only Mode**
+
+Other Bambu printers (P1/X1) speak the same protocol and differ only in slicer presets — untested, patches welcome.
+
+## Getting started
+
+```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/python bridge.py
 ```
 
-Проверить, что слайсер жив: `.venv/bin/python bridge.py --selfcheck`.
-Проверить базу: `.venv/bin/python db.py`.
+Open <http://127.0.0.1:8765>. Without a config you can still model and download STL — printing and AI need the file below.
 
-## Хранение
+Sanity checks: `.venv/bin/python bridge.py --selfcheck` slices a test cube; `.venv/bin/python db.py` exercises the database.
 
-Всё состояние лежит в SQLite `pen3d.db` рядом с `bridge.py`:
-
-| таблица | что хранит |
-|---|---|
-| `projects` | сцена, автосохранение при каждой правке |
-| `sketches` | библиотека эскизов |
-| `ai_log` | запросы и ответы моделей |
-| `counters` | накопленный расход токенов |
-
-Сцена сохраняется не чаще раза в 400 мс, поэтому таскать гизмо не значит долбить базу. При первом запуске старый `ai-log.jsonl` и данные из `localStorage` переезжают в базу автоматически. В браузере остаются только настройки моделей (`aicfg`) и текст последнего запроса — API-ключи на сервер не уходят.
-
-Сервер поднимается на `http://127.0.0.1:8765`. Флаг `--lan` — слушать не только localhost, а на всех интерфейсах (без авторизации, см. «Ограничения»).
-
-## Настройка ~/.pen3d.json
+## Configuration — `~/.pen3d.json`
 
 ```json
 {
@@ -57,34 +46,75 @@ python3 -m venv .venv
 }
 ```
 
-- `ip`, `code` (Access Code), `serial` — экран принтера: Settings → Network → LAN Only Mode.
-- `deepseek_key` — ключ DeepSeek для AI-помощника в редакторе (опционально, без него работает только ручное моделирование).
+`ip`, `code` (Access Code) and `serial` are on the printer screen under **Settings → Network → LAN Only Mode**. `deepseek_key` is optional — without it, manual modelling still works.
 
-## Пайплайн печати
+## Layout
 
-1. Редактор шлёт STL модели на `POST /upload` (или `/print`).
-2. `bridge.py` слайсит STL через Bambu Studio CLI → `out.3mf`.
-3. `.3mf` заливается на принтер по FTPS (implicit TLS, порт 990).
-4. `/print` дополнительно шлёт команду старта печати по MQTT (порт 8883).
+```
+bridge.py              server: serves web/, slices STL, prints, runs the agent
+db.py                  SQLite: scene, sketch library, AI log, token counter
+pen3d.db               database, created on first run (not in git)
+web/
+  index.html           editor UI
+  js/                  app, geometry, csg, stl, ai
+  icon.svg
+```
 
-## Пресеты слайсинга
+Only `web/` is exposed over HTTP — `bridge.py`, the database and your config are not reachable from the browser.
 
-Зашиты в `bridge.py` (`PRESETS`): Bambu Lab A1 0.4 nozzle / 0.20mm Standard / Bambu PLA Basic. Чтобы поменять — отредактировать пути в словаре `PRESETS` на другие профили из `~/Library/Application Support/BambuStudio/system/BBL`.
+## Print pipeline
 
-## Горячие клавиши редактора
+1. Editor POSTs the STL to `/upload` (or `/print`).
+2. `bridge.py` slices it through the Bambu Studio CLI into `out.3mf`.
+3. The `.3mf` is uploaded to the printer over FTPS (implicit TLS, port 990).
+4. `/print` additionally sends the start command over MQTT (port 8883).
 
-- `G` / `R` / `S` — перемещение / вращение / масштаб
-- `1`–`4` — виды камеры
-- `⌘Z` / `⇧⌘Z` — отмена / повтор
-- `⌘D` — дублировать объект
-- `Delete` — удалить объект
-- `Esc` — снять выделение
+Slicer presets are pinned in `bridge.py` (`PRESETS`): A1 0.4 nozzle / 0.20mm Standard / Bambu PLA Basic. Point them at other profiles in `~/Library/Application Support/BambuStudio/system/BBL` to change them.
 
-## Ограничения
+## Storage
 
-- TLS-соединение с принтером не проверяет сертификат (самоподписанный) — это ожидаемо для LAN Mode, но не для интернета.
-- Флаг `--lan` открывает сервер на все интерфейсы без какой-либо авторизации — использовать только в доверенной локальной сети.
+Everything lives in SQLite next to the server:
 
-## Лицензия
+| table | holds |
+|---|---|
+| `projects` | the scene, autosaved on every edit |
+| `sketches` | sketch library |
+| `ai_log` | model requests and responses |
+| `counters` | cumulative token spend |
 
-MIT
+Saves are debounced to once per 400 ms, so dragging a gizmo does not hammer the database. On first run, an older `ai-log.jsonl` and anything in `localStorage` migrate over automatically. Only model settings and the last prompt stay in the browser — **API keys are never sent to the server**.
+
+## Keyboard
+
+| key | action |
+|---|---|
+| `G` / `R` / `S` | move / rotate / scale |
+| `1`–`4` | camera views |
+| `⌘Z` / `⇧⌘Z` | undo / redo |
+| `⌘D` | duplicate |
+| `Delete` | delete |
+| `Esc` | deselect |
+
+## Notes on agent cost
+
+Agent runs are metered and the spend is visible in the UI. One measured comparison on the same part (angled phone stand with a cable cutout):
+
+| | before | after |
+|---|---|---|
+| steps | 14 | 10 |
+| tokens | 201 637 | 78 013 |
+| wall time | 245 s | 92 s |
+| per step | 14 402 | 7 801 |
+
+The saving came from **capping the step count and setting `temperature: 0`** — the agent stopped second-guessing and redoing work. It did *not* come from prompt caching: cache hits covered 94–98% of input tokens in both runs. That is also why conversation history is left intact below 60 000 characters — trimming it does not pay for itself and costs the agent the context it needs. Pass `legacy: true` to `/agent` to reproduce the old behaviour and re-run the comparison.
+
+## Limitations
+
+- TLS to the printer does not verify the certificate (it is self-signed) — expected for LAN Mode, not acceptable over the internet.
+- `--lan` binds all interfaces **with no authentication**. Use it only on a network you trust.
+- No fillets or chamfers — the primitive set does not cover them.
+- macOS-only paths for Bambu Studio and its profiles.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
