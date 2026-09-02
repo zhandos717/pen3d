@@ -2,19 +2,25 @@
 
 Локальный 3D-редактор для печати на Bambu Lab A1 напрямую из браузера, без облака Bambu.
 
+> Browser-based 3D editor that slices and prints to a Bambu Lab A1 over LAN, no Bambu Cloud involved.
+
 ## Файлы
 
 - `index.html` — 3D-редактор (примитивы, AI-помощник через DeepSeek)
 - `editor-2d-old.html` — старая 2D-версия
 - `bridge.py` — локальный сервер: раздаёт статику, слайсит STL и печатает
-- `.venv` — python-окружение с `paho-mqtt`
 
 ## Запуск
 
+Нужны macOS с установленной Bambu Studio (для CLI-слайсинга) и Python 3.11+.
+
 ```
-cd ~/pen3d
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 .venv/bin/python bridge.py
 ```
+
+Проверить, что слайсер жив: `.venv/bin/python bridge.py --selfcheck`.
 
 Сервер поднимается на `http://127.0.0.1:8765`. Флаг `--lan` — слушать не только localhost, а на всех интерфейсах (без авторизации, см. «Ограничения»).
 
@@ -56,3 +62,7 @@ cd ~/pen3d
 
 - TLS-соединение с принтером не проверяет сертификат (самоподписанный) — это ожидаемо для LAN Mode, но не для интернета.
 - Флаг `--lan` открывает сервер на все интерфейсы без какой-либо авторизации — использовать только в доверенной локальной сети.
+
+## Лицензия
+
+MIT
