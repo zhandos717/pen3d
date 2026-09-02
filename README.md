@@ -11,6 +11,7 @@ An optional AI agent builds parts for you: it places primitives step by step, ch
 - **Model in the browser** — box, cylinder, prism, sphere, cone, torus, wedge and real metric threads; freehand sketches extruded into solids; booleans (any body can become a hole).
 - **Slice and print over LAN** — the editor sends STL to a local Python server, which slices via the Bambu Studio CLI, uploads the `.3mf` over FTPS and starts the print over MQTT.
 - **AI agent** — describe the part in plain language; the agent works with tools (`add_shape`, `update_shape`, `delete_shape`, `get_scene`, `check`, `finish`) on its own build plate, so your work is never touched. You watch it build live and can take the result over or stop it mid-run.
+- **Live printer status** — state, nozzle and bed temperatures, Wi-Fi signal, and during a print the progress bar, layer count and time left, read straight off the printer over MQTT.
 - **Server-side printability checks** — connectivity, floating bodies, holes larger than the part, walls too thin.
 
 Works with DeepSeek, any OpenAI-compatible endpoint (OpenRouter, Groq, Together), local Ollama, or Anthropic.
@@ -68,6 +69,8 @@ Only `web/` is exposed over HTTP — `bridge.py`, the database and your config a
 2. `bridge.py` slices it through the Bambu Studio CLI into `out.3mf`.
 3. The `.3mf` is uploaded to the printer over FTPS (implicit TLS, port 990).
 4. `/print` additionally sends the start command over MQTT (port 8883).
+
+The same MQTT connection feeds `GET /printer`, which the editor polls for live status. The response carries an `age` field, so stale data is visible instead of silently frozen.
 
 Slicer presets are pinned in `bridge.py` (`PRESETS`): A1 0.4 nozzle / 0.20mm Standard / Bambu PLA Basic. Point them at other profiles in `~/Library/Application Support/BambuStudio/system/BBL` to change them.
 

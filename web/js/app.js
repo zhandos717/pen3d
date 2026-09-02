@@ -577,6 +577,44 @@ async function loadLog(){
 $('log-refresh').onclick = loadLog;
 loadLog();
 
+// статус принтера: опрашиваем сервер, он держит MQTT сам
+const STATES = {IDLE:'простаивает', RUNNING:'печатает', PAUSE:'на паузе',
+                FINISH:'печать закончена', FAILED:'сбой печати', PREPARE:'готовится', SLICING:'слайсит'};
+async function pollPrinter(){
+  const box = $('printer');
+  try{
+    const p = await (await fetch('/printer')).json();
+    if(!p.online){
+      box.className = 'pr err';
+      box.innerHTML = `<div class="pr-row"><span class="dot"></span><b>нет связи</b></div>
+        <div>${esc(p.error || 'принтер не отвечает')}</div>`;
+      return;
+    }
+    const busy = p.state === 'RUNNING' || p.state === 'PREPARE';
+    box.className = 'pr ' + (p.error_code ? 'err' : busy ? 'busy' : 'on');
+    const mins = p.remaining ? `${Math.floor(p.remaining/60)} ч ${p.remaining%60} мин` : '';
+    box.innerHTML = `
+      <div class="pr-row"><span class="dot"></span><b>${esc(STATES[p.state] || p.state || '—')}</b>
+        <span>${p.wifi ? 'Wi-Fi ' + esc(p.wifi) : ''}</span></div>
+      ${busy ? `<div class="bar"><i style="width:${p.percent || 0}%"></i></div>
+        <div class="pr-row"><span>${esc(p.job || 'печать')}</span>
+          <span class="t">${p.percent || 0}%</span></div>
+        <div class="pr-row"><span>слой ${p.layer || 0} из ${p.layers || 0}</span>
+          <span class="t">${mins}</span></div>` : ''}
+      <div class="pr-row"><span>сопло</span>
+        <span class="t">${Math.round(p.nozzle || 0)}°${p.nozzle_target ? ' → ' + Math.round(p.nozzle_target) + '°' : ''}</span></div>
+      <div class="pr-row"><span>стол</span>
+        <span class="t">${Math.round(p.bed || 0)}°${p.bed_target ? ' → ' + Math.round(p.bed_target) + '°' : ''}</span></div>
+      ${p.filament.length ? `<div class="pr-row"><span>филамент</span><span class="t">${p.filament.map(f => esc(f.type)).join(', ')}</span></div>` : ''}
+      ${p.error_code ? `<div style="color:var(--danger)">ошибка принтера: ${p.error_code}</div>` : ''}
+      ${p.age > 30 ? `<div>данные ${p.age} с назад</div>` : ''}`;
+  }catch(e){
+    box.className = 'pr err';
+    box.innerHTML = '<div class="pr-row"><span class="dot"></span><b>сервер не отвечает</b></div>';
+  }
+}
+pollPrinter(); setInterval(pollPrinter, 4000);
+
 // расход токенов, копится в базе
 const tok = {in:0, out:0, calls:0};
 const saveTokens = () => fetch('/api/tokens', {method:'POST', headers:{'content-type':'application/json'},

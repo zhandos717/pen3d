@@ -358,6 +358,76 @@ def upload(path, name, ip, code):
     ftp.quit()
 
 
+PRINTER = {'state': {}, 'ts': 0, 'error': None, 'client': None}
+
+
+def printer_watch():
+    """Одно живое MQTT-соединение: копим последний отчёт принтера.
+    Адрес, код и серийник берутся только из конфига — в исходнике их быть не должно."""
+    if PRINTER['client']:
+        return
+    import paho.mqtt.client as mqtt
+    c = cfg() if os.path.exists(CFG) else {}
+    if not (c.get('ip') and c.get('code') and c.get('serial')):
+        PRINTER['error'] = 'в ~/.pen3d.json нет ip, code или serial'
+        return
+
+    def on_connect(cl, ud, flags, rc, props=None):
+        PRINTER['error'] = None if rc == 0 else f'MQTT отказал: {rc}'
+        cl.subscribe(f"device/{c['serial']}/report")
+        cl.publish(f"device/{c['serial']}/request",
+                   json.dumps({'pushing': {'sequence_id': '1', 'command': 'pushall'}}))
+
+    def on_message(cl, ud, msg):
+        try:
+            d = json.loads(msg.payload).get('print') or {}
+        except (ValueError, AttributeError):
+            return
+        if d:
+            PRINTER['state'].update(d)
+            PRINTER['ts'] = time.time()
+
+    def on_disconnect(cl, ud, *a):
+        PRINTER['error'] = 'связь с принтером потеряна, переподключаюсь'
+
+    cl = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    cl.username_pw_set('bblp', c['code'])
+    cl.tls_set(cert_reqs=ssl.CERT_NONE, tls_version=ssl.PROTOCOL_TLS_CLIENT)
+    cl.tls_insecure_set(True)
+    cl.reconnect_delay_set(1, 30)          # принтер засыпает и рвёт связь
+    cl.on_connect, cl.on_message, cl.on_disconnect = on_connect, on_message, on_disconnect
+    try:
+        cl.connect_async(c['ip'], 8883, 20)
+        cl.loop_start()                     # paho поднимает поток демоном сам
+    except OSError as e:
+        PRINTER['error'] = f'принтер не отвечает: {e}'
+        return
+    PRINTER['client'] = cl
+
+
+def printer_status():
+    printer_watch()
+    st = PRINTER['state']
+    if not st:
+        return {'online': False, 'error': PRINTER['error'] or 'жду ответа принтера'}
+    ams = []
+    for a in ((st.get('ams') or {}).get('ams') or []):
+        for tray in a.get('tray', []):
+            if tray.get('tray_type'):
+                ams.append({'type': tray['tray_type'], 'color': tray.get('tray_color', '')})
+    age = round(time.time() - PRINTER['ts'])
+    return {
+        'online': age < 120, 'age': age, 'error': PRINTER['error'],
+        'state': st.get('gcode_state'), 'error_code': st.get('print_error'),
+        'percent': st.get('mc_percent'), 'remaining': st.get('mc_remaining_time'),
+        'layer': st.get('layer_num'), 'layers': st.get('total_layer_num'),
+        'job': st.get('subtask_name') or '',
+        'nozzle': st.get('nozzle_temper'), 'nozzle_target': st.get('nozzle_target_temper'),
+        'bed': st.get('bed_temper'), 'bed_target': st.get('bed_target_temper'),
+        'wifi': st.get('wifi_signal'), 'filament': ams,
+    }
+
+
 def start_print(name, ip, code, serial):
     import paho.mqtt.client as mqtt
     payload = {"print": {
@@ -394,6 +464,11 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         p = self.path.split('?')[0].rstrip('/')
+        if p.endswith('/printer'):
+            try:
+                return self._send(200, printer_status())
+            except Exception as e:
+                return self._send(200, {'online': False, 'error': f'{type(e).__name__}: {e}'})
         if p.endswith('/ai-log'):
             return self.do_ai_log()
         if p == '/api/state':

@@ -111,6 +111,16 @@ code{font:11px ui-monospace,monospace;color:var(--dim)}
 .obj.hole .sw{background:#d0455f}
 .obj.hidden{opacity:.45}
 .obj.grp .nm::after{content:' ⛓';color:var(--dim);font-size:10px}
+.pr{font-size:12px;color:var(--dim);line-height:1.7}
+.pr-row{display:flex;align-items:center;gap:6px;justify-content:space-between}
+.pr-row b{color:var(--ink);font-weight:600}
+.pr .dot{width:8px;height:8px;border-radius:50%;background:#555c68;flex:none}
+.pr.on .dot{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+.pr.busy .dot{background:#f0b429;box-shadow:0 0 8px #f0b429}
+.pr.err .dot{background:var(--danger);box-shadow:0 0 8px var(--danger)}
+.pr .bar{height:5px;border-radius:3px;background:#22262e;overflow:hidden;margin:5px 0 2px}
+.pr .bar i{display:block;height:100%;background:var(--accent);transition:width .4s}
+.pr .t{font-variant-numeric:tabular-nums;color:var(--ink)}
 .obj button{padding:1px 5px;font-size:11px;background:transparent;border-color:transparent;color:var(--dim)}
 .obj button:hover{color:var(--ink);background:#232733}
 </style>
@@ -148,6 +158,13 @@ code{font:11px ui-monospace,monospace;color:var(--dim)}
       </div>
       <div class="hint">Автосохранение в базу включено. База — <code>pen3d.db</code> рядом с сервером.</div>
     </div>
+    <div class="grp">
+      <h2>Принтер</h2>
+      <div id="printer" class="pr">
+        <div class="pr-row"><span class="dot"></span><b id="pr-state">подключаюсь…</b></div>
+      </div>
+    </div>
+
     <div class="grp">
       <h2>Печать</h2>
       <div class="stack">
