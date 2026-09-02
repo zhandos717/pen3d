@@ -109,6 +109,7 @@ Everything lives in SQLite next to the server:
 | table | holds |
 |---|---|
 | `projects` | the scene, autosaved on every edit |
+| `snapshots` | scene version history, auto every 5 min, last 30 kept |
 | `sketches` | sketch library |
 | `ai_log` | model requests and responses |
 | `counters` | cumulative token spend |

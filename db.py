@@ -33,6 +33,13 @@ CREATE TABLE IF NOT EXISTS ai_log(
   usage  TEXT,                              -- {"prompt_tokens":N,...} как вернула модель
   error  TEXT);
 
+CREATE TABLE IF NOT EXISTS snapshots(
+  id      INTEGER PRIMARY KEY,
+  ts      TEXT NOT NULL,
+  data    TEXT NOT NULL,                 -- снимок сцены целиком
+  bodies  INTEGER NOT NULL,              -- тел в снимке, чтобы список читался без разбора JSON
+  note    TEXT);                         -- 'авто' или причина ручного снимка
+
 CREATE TABLE IF NOT EXISTS counters(
   name  TEXT PRIMARY KEY,                   -- 'tokens': накопленный расход за всё время
   value TEXT NOT NULL);
@@ -91,6 +98,51 @@ def scene_put(data, pid=1, name='Текущий'):
         c.execute("""INSERT INTO projects(id,name,data,updated_at) VALUES(?,?,?,?)
                      ON CONFLICT(id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at""",
                   (pid, name, json.dumps(data, ensure_ascii=False), now()))
+
+
+# ---------- история версий ----------
+KEEP = 30                                # снимков храним не больше
+EVERY = 300                              # и не чаще раза в пять минут
+
+
+def snapshot_add(data, note='авто'):
+    body = json.dumps(data, ensure_ascii=False)
+    with conn() as c:
+        c.execute('INSERT INTO snapshots(ts,data,bodies,note) VALUES(?,?,?,?)',
+                  (now(), body, len(data.get('objects', [])), note))
+        c.execute('DELETE FROM snapshots WHERE id NOT IN '
+                  '(SELECT id FROM snapshots ORDER BY id DESC LIMIT ?)', (KEEP,))
+
+
+def snapshot_maybe(data):
+    """Снимок раз в EVERY секунд и только если сцена изменилась.
+
+    Иначе автосохранение, срабатывающее на каждое движение мыши,
+    забило бы историю сотней одинаковых версий за минуту.
+    """
+    body = json.dumps(data, ensure_ascii=False)
+    with conn() as c:
+        last = c.execute('SELECT ts, data FROM snapshots ORDER BY id DESC LIMIT 1').fetchone()
+    if last:
+        if last['data'] == body:
+            return False
+        age = time.time() - time.mktime(time.strptime(last['ts'], '%Y-%m-%d %H:%M:%S'))
+        if age < EVERY:
+            return False
+    snapshot_add(data)
+    return True
+
+
+def snapshots():
+    with conn() as c:
+        return [{'id': r['id'], 'ts': r['ts'], 'bodies': r['bodies'], 'note': r['note']}
+                for r in c.execute('SELECT id,ts,bodies,note FROM snapshots ORDER BY id DESC')]
+
+
+def snapshot_get(sid):
+    with conn() as c:
+        r = c.execute('SELECT data FROM snapshots WHERE id=?', (sid,)).fetchone()
+    return json.loads(r['data']) if r else None
 
 
 # ---------- эскизы ----------
@@ -168,6 +220,22 @@ def selfcheck():
     r = log_rows()[-1]
     assert r['model'] == 'deepseek-chat' and len(r['answer']) == 1500, 'длинный ответ должен обрезаться'
     assert r['usage']['total_tokens'] == 100
+
+    assert snapshots() == [], 'история пуста на старте'
+    sc = {'objects': [{'id': 1, 'name': 'Короб'}], 'nextId': 2}
+    assert snapshot_maybe(sc), 'первый снимок должен создаться'
+    assert not snapshot_maybe(sc), 'та же сцена второй раз в историю не идёт'
+    sc2 = {'objects': [], 'nextId': 1}
+    assert not snapshot_maybe(sc2), 'изменённая сцена ждёт своей минуты, а не пишется сразу'
+    snapshot_add(sc2, 'вручную')
+    h = snapshots()
+    assert len(h) == 2 and h[0]['note'] == 'вручную', h
+    assert h[0]['bodies'] == 0 and h[1]['bodies'] == 1, 'число тел считается при записи'
+    assert snapshot_get(h[1]['id'])['objects'][0]['name'] == 'Короб'
+    assert snapshot_get(10**6) is None, 'несуществующий снимок — None, а не падение'
+    for i in range(KEEP + 5):
+        snapshot_add({'objects': [{'id': i}], 'nextId': i + 1})
+    assert len(snapshots()) == KEEP, f'старые снимки должны вытесняться, осталось {len(snapshots())}'
 
     assert counter_get() == {'in': 0, 'out': 0, 'calls': 0}, 'счётчик по умолчанию нулевой'
     counter_put({'in': 5, 'out': 7, 'calls': 1})

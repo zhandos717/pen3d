@@ -133,6 +133,11 @@ code{font:11px ui-monospace,monospace;color:var(--dim)}
 .pr .dot{width:8px;height:8px;border-radius:50%;background:#555c68;flex:none}
 .pr.on .dot{background:var(--accent);box-shadow:0 0 8px var(--accent)}
 #cam-box{margin-top:6px}
+#hist-box{margin-top:6px;max-height:190px;overflow:auto;border:1px solid var(--line);border-radius:6px}
+#hist-box .v{display:flex;justify-content:space-between;gap:6px;padding:4px 7px;cursor:pointer;font-size:11px;color:var(--dim)}
+#hist-box .v:hover{background:#232733;color:var(--ink)}
+#hist-box .v b{color:var(--ink);font-weight:500}
+#hist-box .none{padding:6px 7px;font-size:11px;color:var(--dim)}
 #cam{width:100%;border-radius:6px;border:1px solid var(--line);display:block;background:#000;min-height:90px}
 .pr.busy .dot{background:#f0b429;box-shadow:0 0 8px #f0b429}
 .pr.err .dot{background:var(--danger);box-shadow:0 0 8px var(--danger)}
@@ -180,6 +185,8 @@ code{font:11px ui-monospace,monospace;color:var(--dim)}
           <button class="sm" id="open">Открыть</button>
         </div>
         <button class="sm" id="clear">Новый проект</button>
+        <button class="sm" id="history">История версий</button>
+        <div id="hist-box" hidden></div>
       </div>
       <div class="hint">Автосохранение в базу включено. База — <code>pen3d.db</code> рядом с сервером.</div>
     </div>

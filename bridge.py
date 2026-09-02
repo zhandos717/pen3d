@@ -674,6 +674,8 @@ class H(BaseHTTPRequestHandler):
             return self.do_ai_log()
         if p == '/camera':
             return self.do_camera()
+        if p == '/api/history':
+            return self._send(200, {'rows': db.snapshots()})
         if p == '/api/state':
             return self._send(200, {'scene': db.scene_get(), 'sketches': db.sketches(),
                                     'tokens': db.counter_get()})
@@ -697,7 +699,19 @@ class H(BaseHTTPRequestHandler):
         p = self.path.rstrip('/')
         try:
             if p == '/api/scene':
-                db.scene_put(json.loads(body))
+                data = json.loads(body)
+                db.scene_put(data)
+                return self._send(200, {'ok': True, 'snapshot': db.snapshot_maybe(data)})
+            if p == '/api/history':
+                data = json.loads(body) if body else {}
+                if data.get('restore'):
+                    sc = db.snapshot_get(int(data['restore']))
+                    if not sc:
+                        return self._send(404, {'error': 'нет такой версии'})
+                    db.snapshot_add(db.scene_get() or {'objects': [], 'nextId': 1}, 'перед откатом')
+                    db.scene_put(sc)
+                    return self._send(200, {'ok': True, 'scene': sc})
+                db.snapshot_add(json.loads(body) if body else db.scene_get(), 'вручную')
                 return self._send(200, {'ok': True})
             if p == '/api/sketches':
                 return self._send(200, {'id': db.sketch_add(json.loads(body))})

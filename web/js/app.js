@@ -208,10 +208,21 @@ const hist = [], redoStack = [];
 const snapshot = () => JSON.stringify({objects, nextId});
 // push() — состояние ДО изменения; вызывать перед мутацией objects
 function push(){ hist.push(snapshot()); if(hist.length > 100) hist.shift(); redoStack.length = 0; }
+// Неполный объект (чужой или старый файл проекта) давал NaN в габаритах и матрицах,
+// поэтому недостающие поля добираем значениями по умолчанию, а не доверяем файлу.
+const DEFAULTS = {type:'box', x:0, y:0, z:0, w:10, d:10, h:10, rot:0, rx:0, rz:0,
+                  sides:6, dia:10, pitch:1.5, hole:false, vis:true, color:'#2dd4a7'};
+const fill = o => {
+  const r = {...DEFAULTS, ...o};
+  for(const k of ['x','y','z','w','d','h','rot','rx','rz','sides','dia','pitch'])
+    if(!Number.isFinite(+r[k])) r[k] = DEFAULTS[k];
+  return r;
+};
+
 function restore(s){
   const d = typeof s === 'string' ? JSON.parse(s) : s;   // из истории приходит строка, из базы — объект
   if(!Array.isArray(d?.objects)) throw new Error('битый файл проекта');
-  objects = d.objects; nextId = +d.nextId || Math.max(0, ...objects.map(o => o.id)) + 1;
+  objects = d.objects.map(fill); nextId = +d.nextId || Math.max(0, ...objects.map(o => o.id)) + 1;
   if(!byId(selId)) selId = null;
   sync();
 }
@@ -925,6 +936,36 @@ $('libfile').onchange = async e => {
     say(`добавлено эскизов: ${good.length}`, 'ok');
   }catch(err){ say('импорт не удался: ' + err.message, 'err'); }
   e.target.value = '';
+};
+
+// ---------- история версий ----------
+// Снимок пишется сервером не чаще раза в пять минут и только при изменениях,
+// поэтому список остаётся коротким даже после часа работы.
+async function renderHistory(){
+  const box = $('hist-box');
+  try{
+    const rows = (await (await fetch('/api/history')).json()).rows || [];
+    box.innerHTML = rows.length ? '' : '<div class="none">пока нет ни одной версии</div>';
+    for(const r of rows){
+      const el = document.createElement('div');
+      el.className = 'v';
+      el.innerHTML = `<b>${esc(r.ts.slice(5, 16))}</b><span>${r.bodies} тел · ${esc(r.note || '')}</span>`;
+      el.onclick = async () => {
+        if(!confirm(`Вернуть сцену на ${r.ts}? Текущая тоже попадёт в историю.`)) return;
+        const j = await (await fetch('/api/history', {method:'POST', headers:{'content-type':'application/json'},
+                                                     body: JSON.stringify({restore: r.id})})).json();
+        if(j.error) return say(j.error, 'err');
+        restore(j.scene); renderHistory(); say('сцена возвращена на ' + r.ts, 'ok');
+      };
+      box.appendChild(el);
+    }
+  }catch(e){ box.innerHTML = '<div class="none">история недоступна</div>'; }
+}
+$('history').onclick = () => {
+  const box = $('hist-box'), show = box.hidden;
+  box.hidden = !show;
+  $('history').textContent = show ? 'Скрыть историю' : 'История версий';
+  if(show) renderHistory();
 };
 
 // ---------- камера ----------
