@@ -45,6 +45,17 @@ function makePlate(offset, tint){
 }
 const plates = [makePlate(0, 0x1c2028), makePlate(PLATE_GAP, 0x1a2431)];
 
+let agentBusy = false, pulse = 0;
+function stepPulse(){
+  if(!agentBusy) return;
+  pulse += .06;
+  const k = .5 + .5*Math.sin(pulse);
+  const e = plates[1].edge;
+  e.visible = true;
+  e.material.color.setRGB(.18 + .36*k, .55 + .3*k, 1);
+  plates[1].plate.material.color.setRGB(.1 + .05*k, .14 + .06*k, .21 + .08*k);
+}
+
 // видно, какой стол уедет в печать
 function markPlates(){
   const active = printPlate();
@@ -587,6 +598,38 @@ showTokens();
 $('plate-print').onchange = () => { updateDims(); markPlates(); focusPlate(); if(showResult) rebuild();
   say(printPlate() ? 'печатаем стол агента' : 'печатаем твой стол'); };
 
+// показать промежуточное состояние стола агента, не трогая историю
+function showAgentShapes(shapes){
+  const maxId = Math.max(0, ...objects.filter(o => !o.plate).map(o => o.id));
+  objects = objects.filter(o => !o.plate).concat(shapes.map(o => ({
+    rot:0, rx:0, rz:0, sides:6, dia:10, pitch:1.5, color:'#8fb4f7', vis:true, ...o,
+    id: maxId + 1 + (o.id || 0), plate: 1})));
+  sync();
+}
+
+async function runAgentStream(task, onEvent){
+  const r = await fetch('/agent/stream', {method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({task, scene: objects.filter(o => o.plate).map(({plate, ...o}) => o),
+                          model: model.value, base_url: base.value, key: key.value})});
+  if(!r.ok || !r.body) throw new Error('сервер не отдал поток: ' + r.status);
+  const reader = r.body.getReader(), dec = new TextDecoder();
+  let buf = '', last = null;
+  for(;;){
+    const {value, done} = await reader.read();
+    if(done) break;
+    buf += dec.decode(value, {stream:true});
+    const parts = buf.split('\n\n'); buf = parts.pop();
+    for(const p of parts){
+      const line = p.replace(/^data: /, '').trim();
+      if(!line) continue;
+      let ev; try{ ev = JSON.parse(line); }catch(e){ continue; }
+      if(ev.type === 'done' || ev.type === 'error') last = ev; else onEvent(ev);
+    }
+  }
+  if(!last) throw new Error('поток оборвался');
+  return last;
+}
+
 $('take').onclick = () => {
   const theirs = objects.filter(o => o.plate);
   if(!theirs.length) return say('у агента пусто', 'err');
@@ -620,10 +663,16 @@ $('gen').onclick = async e => {
   btn.disabled = true; btn.textContent = 'думает…'; say(`${model.value} думает…`);
   try{
     if($('agent').checked && prov.value !== 'anthropic'){
-      const r = await fetch('/agent', {method:'POST', headers:{'content-type':'application/json'},
-        body: JSON.stringify({task, scene: objects.filter(o => o.plate).map(({plate, ...o}) => o),
-                              model: model.value, base_url: base.value, key: key.value})});
-      const j = await r.json();
+      agentBusy = true; focusPlate(PLATE_GAP);
+      const j = await runAgentStream(task, ev => {
+        if(ev.type === 'thinking'){ say(`агент думает… шаг ${ev.step + 1}`); return; }
+        if(ev.type !== 'tool') return;
+        const names = {add_shape:'ставит', update_shape:'правит', delete_shape:'убирает',
+                       get_scene:'смотрит сцену', check:'проверяет', finish:'заканчивает'};
+        say(`агент ${names[ev.tool] || ev.tool} ${ev.args?.name || ''}`.trim());
+        if(ev.shapes) showAgentShapes(ev.shapes);        // деталь растёт на глазах
+      });
+      agentBusy = false; markPlates();
       if(j.error) throw new Error(j.error);
       push();
       const maxId = Math.max(0, ...objects.map(o => o.id));
@@ -775,7 +824,7 @@ function loop(){
   if(view.width !== Math.round(w*dpr) || view.height !== Math.round(h*dpr)){
     renderer.setSize(w, h, false); cam.aspect = w/h; cam.updateProjectionMatrix(); }
   requestAnimationFrame(loop);
-  stepFly(); orbit.update(); renderer.render(scene, cam);
+  stepFly(); stepPulse(); orbit.update(); renderer.render(scene, cam);
   try{ drawLabels(); }catch(e){ window.__lastErr = e.message + ' @ ' + (e.stack||'').split('\n')[1]; }
 }
 // всё состояние приезжает из базы одним запросом
