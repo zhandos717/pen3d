@@ -5,6 +5,7 @@ import { unitGeo } from './geometry.js';
 import { buildResult, holeGhost } from './csg.js';
 import { meshToStl } from './stl.js';
 import { PROMPT, PROVIDERS, sanitize } from './ai.js';
+import { gearSketch } from './gear.js';
 import { t } from './i18n.js';
 
 const BED = 256;
@@ -58,12 +59,29 @@ function stepPulse(){
 }
 
 // видно, какой стол уедет в печать
+// Цвет плиты — по температуре: холодная синеватая, горячая уходит в тёплый.
+// Пока принтер молчит, берём температуру из типа пластины и заряженного материала.
+const PLATE_TEMP = {'Cool Plate': 35, 'Textured PEI Plate': 65, 'Engineering Plate': 80, 'High Temp Plate': 100};
+let bedNow = null;                             // фактическая температура стола, если принтер отвечает
+
+function bedColor(temp, active){
+  const k = Math.max(0, Math.min(1, ((temp ?? 25) - 25) / 75));   // 25° → 0, 100° → 1
+  const cold = new THREE.Color(0x1b2635), hot = new THREE.Color(0x4a2318);
+  const c = cold.clone().lerp(hot, k);
+  return active ? c.multiplyScalar(1.35) : c.multiplyScalar(.75);
+}
+
+function plateTemp(){
+  return bedNow ?? PLATE_TEMP[$('bed')?.value] ?? 60;
+}
+
 function markPlates(){
   const active = printPlate();
+  const temp = plateTemp();
   plates.forEach((p, i) => {
     const on = i === active;
     p.edge.visible = on;
-    p.plate.material.color.setHex(on ? (i ? 0x213041 : 0x252c37) : p.tint);
+    p.plate.material.color.copy(bedColor(temp, on));
     p.grid.material.transparent = !on; p.grid.material.opacity = on ? 1 : .4;
   });
 }
@@ -599,7 +617,7 @@ $('estimate').onclick = async e => {
   try{
     const r = await fetch('/estimate', {method:'POST', body: out, headers:{
       'x-support': $('sup').checked ? '1' : '0', 'x-infill': $('infill').value,
-      'x-pattern': $('pattern').value, 'x-walls': $('walls').value}});
+      'x-pattern': $('pattern').value, 'x-walls': $('walls').value, 'x-bed': $('bed').value}});
     const j = await r.json();
     if(j.error) throw new Error(j.error);
     const h = Math.floor(j.seconds/3600), m = Math.round(j.seconds%3600/60);
@@ -625,7 +643,7 @@ async function toPrinter(path, btn, label){
   try{
     const r = await fetch(path, {method:'POST', body: out, headers:{
       'x-support': $('sup').checked ? '1' : '0',
-      'x-infill': $('infill').value, 'x-pattern': $('pattern').value, 'x-walls': $('walls').value}});
+      'x-infill': $('infill').value, 'x-pattern': $('pattern').value, 'x-walls': $('walls').value, 'x-bed': $('bed').value}});
     const j = await r.json();
     if(j.error) throw new Error(j.error);
     say((j.printing ? 'печать запущена: ' : 'залито на принтер: ') + j.file
@@ -723,6 +741,9 @@ async function pollPrinter(){
       return;
     }
     const busy = p.state === 'RUNNING' || p.state === 'PREPARE';
+    const wasBed = bedNow;
+    bedNow = busy ? (p.bed ?? null) : null;      // вне печати показываем расчёт по пластине
+    if (Math.round(wasBed ?? -1) !== Math.round(bedNow ?? -1)) markPlates();
     box.className = 'pr ' + (p.error_code ? 'err' : busy ? 'busy' : 'on');
     const mins = p.remaining ? `${Math.floor(p.remaining/60)} ч ${p.remaining%60} мин` : '';
     box.innerHTML = `
@@ -771,6 +792,24 @@ function addTokens(u){
 $('tokens-reset').onclick = () => { tok.in = tok.out = tok.calls = 0;
   saveTokens(); showTokens(); say('счётчик сброшен'); };
 showTokens();
+
+$('bed').value = localStorage.bed || 'Textured PEI Plate';
+$('bed').onchange = () => { localStorage.bed = $('bed').value; markPlates();
+  say(`пластина: ${$('bed').selectedOptions[0].textContent}`); };
+
+// Двойной клик по плите делает её активной: печатать будем её, камера переезжает следом.
+// Точку берём на плоскости стола — тем же лучом, что и рисование эскиза.
+view.addEventListener('dblclick', e => {
+  if(sketching || gizmo.dragging) return;
+  const p = bedPoint(e);
+  if(!p) return;
+  const near = Math.abs(p.x) < Math.abs(p.x - PLATE_GAP) ? 0 : 1;
+  if(Math.abs(p.x - near * PLATE_GAP) > BED / 2 + 20) return;   // мимо обеих плит
+  const sel2 = $('plate-print');
+  if(+sel2.value === near) return focusPlate();                 // уже активна — просто подлетаем
+  sel2.value = String(near);
+  sel2.dispatchEvent(new Event('change'));
+});
 
 $('plate-print').onchange = () => { updateDims(); markPlates(); focusPlate(); if(showResult) rebuild();
   say(printPlate() ? 'печатаем стол агента' : 'печатаем твой стол'); };
@@ -930,6 +969,27 @@ $('gen').onclick = async e => {
         dropped.length ? 'err' : 'ok');
   }catch(err){ say('AI: ' + err.message, 'err'); loadLog(); }
   done();
+};
+
+// ---------- шестерни ----------
+// Колесо задают два числа: z (зубьев) и m (модуль, мм). Всё остальное из них следует,
+// поэтому шестерню нельзя тянуть за размер — изменится модуль, и пара перестанет цепляться.
+function gearInfo(){
+  const z = Math.max(6, Math.min(200, Math.round(+$('g-z').value || 17)));
+  const m = Math.max(.3, Math.min(10, +$('g-m').value || 2));
+  const g = gearSketch(z, m);
+  $('gear-hint').textContent =
+    `Ø${g.size} мм внешний · делительный ${g.pitch} · с такой же ось на ${g.pitch} мм`;
+  return {z, m, g};
+}
+['g-z', 'g-m'].forEach(id => $(id).oninput = gearInfo);
+gearInfo();
+
+$('gear').onclick = () => {
+  const {z, m, g} = gearInfo();
+  add('sketch', {pts: g.pts, name: `Шестерня z${z} m${m}`, w: g.size, d: g.size, h: 6});
+  showTab('props');
+  say(`шестерня z${z} m${m} · Ø${g.size} мм · размер не меняй, иначе не зацепится`, 'ok');
 };
 
 // ---------- библиотека эскизов ----------
@@ -1102,7 +1162,9 @@ function drawLabels(){
   }
   // подписи столов: видно, какой печатается
   const act = printPlate();
-  label(i++, act === 0 ? 'МОЙ СТОЛ · в печать' : 'мой стол', V(0, 0, -BED/2 - 14), act === 0 ? '' : 'bed');
+  const plate = $('bed').selectedOptions[0]?.textContent || '';
+  label(i++, act === 0 ? `МОЙ СТОЛ · ${plate} · в печать` : 'мой стол',
+        V(0, 0, -BED/2 - 14), act === 0 ? '' : 'bed');
   label(i++, act === 1 ? 'СТОЛ АГЕНТА · в печать' : 'стол агента',
         V(PLATE_GAP, 0, -BED/2 - 14), act === 1 ? '' : 'bed');
 

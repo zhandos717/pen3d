@@ -445,13 +445,74 @@ def filament_facts():
             'cost_per_kg': cost, 'density_guessed': guessed}
 
 
-def process_preset(outdir, support, infill=None, pattern=None, walls=None):
+def flatten_preset(path, outdir, name_suffix=''):
+    """CLI берёт из профиля только id и не разворачивает inherits: тип филамента
+    и температуры стола остаются от PLA. Склеиваем цепочку сами."""
+    chain, cur = [], path
+    folder = os.path.dirname(path)
+    while cur and os.path.exists(cur):
+        with open(cur) as f:
+            d = json.load(f)
+        chain.append(d)
+        cur = os.path.join(folder, d['inherits'] + '.json') if d.get('inherits') else None
+    merged = {}
+    for d in reversed(chain):                  # от базы к листу
+        merged.update(d)
+    merged.pop('inherits', None)
+    merged['from'] = 'User'
+    merged['name'] = merged.get('name', 'pen3d') + name_suffix
+    out = os.path.join(outdir, 'filament-pen3d.json')
+    with open(out, 'w') as f:
+        json.dump(merged, f)
+    return out
+
+
+def filament_preset(material):
+    """Материал в задании должен совпадать с заряженным: A1 сверяет их
+    и молча отменяет печать, если в принтере PETG, а нарезано под PLA."""
+    if not material:
+        return PRESETS['filament']
+    folder = os.path.dirname(PRESETS['filament'])
+    want = material.upper()
+    best = None
+    for f in sorted(os.listdir(folder)):
+        if not f.endswith('.json') or '@BBL A1' not in f or 'A1M' in f or 'nozzle' in f:
+            continue
+        name = f[:-5].upper()
+        if f'BAMBU {want} BASIC' in name:
+            return os.path.join(folder, f)
+        if want in name and best is None:
+            best = os.path.join(folder, f)
+    return best or PRESETS['filament']
+
+
+def loaded_material():
+    """Что реально заряжено в принтере — по внешней катушке или активному лотку AMS."""
+    st = PRINTER.get('state') or {}
+    tray = st.get('vt_tray') or {}
+    if tray.get('tray_type'):
+        return tray['tray_type']
+    for unit in ((st.get('ams') or {}).get('ams') or []):
+        for t in unit.get('tray', []):
+            if t.get('tray_type'):
+                return t['tray_type']
+    return None
+
+
+BED_TYPES = {'Cool Plate': 'cool_plate', 'Textured PEI Plate': 'textured_plate',
+             'Bambu Cool Plate': 'cool_plate', 'Engineering Plate': 'eng_plate',
+             'High Temp Plate': 'hot_plate'}
+
+
+def process_preset(outdir, support, infill=None, pattern=None, walls=None, bed='Textured PEI Plate'):
     """Поддержки и заполнение живут в профиле процесса, у CLI флагов для них нет."""
-    if not (support or infill or pattern or walls):
+    if not (support or infill or pattern or walls or bed):
         return PRESETS['process']
     with open(PRESETS['process']) as f:
         p = json.load(f)
     p['name'] = 'pen3d'
+    if bed:                                    # без явного стола CLI берёт Cool Plate,
+        p['curr_bed_type'] = bed               # и PETG греется до 35° вместо 70°
     if support:
         p.update(enable_support='1', support_type='tree(auto)', support_threshold_angle='30')
     if infill:
@@ -469,11 +530,12 @@ def process_preset(outdir, support, infill=None, pattern=None, walls=None):
 SLICE_CACHE = {}
 
 
-def sliced(stl_bytes, support, infill, pattern, walls):
+def sliced(stl_bytes, support, infill, pattern, walls, material=None, bed='Textured PEI Plate'):
     """Слайс идёт ~20 секунд, а «оценить» и «печатать» просят одно и то же —
     держим последний результат по хэшу модели и настроек."""
     import hashlib
-    key = hashlib.sha1(stl_bytes).hexdigest() + f'|{support}|{infill}|{pattern}|{walls}'
+    material = material or loaded_material()
+    key = hashlib.sha1(stl_bytes).hexdigest() + f'|{support}|{infill}|{pattern}|{walls}|{material}|{bed}'
     hit = SLICE_CACHE.get(key)
     if hit and os.path.exists(hit[0]):
         return hit
@@ -481,17 +543,19 @@ def sliced(stl_bytes, support, infill, pattern, walls):
     sp = os.path.join(td, 'model.stl')
     with open(sp, 'wb') as f:
         f.write(stl_bytes)
-    mf = slice_stl(sp, td, support, infill, pattern, walls)
+    mf = slice_stl(sp, td, support, infill, pattern, walls, material, bed)
     SLICE_CACHE.clear()                     # держим только последний, иначе /tmp растёт
     SLICE_CACHE[key] = (mf, td)
     return mf, td
 
 
-def slice_stl(stl_path, outdir, support=False, infill=None, pattern=None, walls=None):
-    proc = process_preset(outdir, support, infill, pattern, walls)
+def slice_stl(stl_path, outdir, support=False, infill=None, pattern=None, walls=None,
+              material=None, bed='Textured PEI Plate'):
+    proc = process_preset(outdir, support, infill, pattern, walls, bed)
+    fil = flatten_preset(filament_preset(material or loaded_material()), outdir)
     r = subprocess.run([STUDIO, '--slice', '0', '--arrange', '1',
                         '--load-settings', f"{PRESETS['machine']};{proc}",
-                        '--load-filaments', PRESETS['filament'],
+                        '--load-filaments', fil,
                         '--export-3mf', 'out.3mf', '--outputdir', outdir, stl_path],
                        capture_output=True, text=True)
     out = os.path.join(outdir, 'out.3mf')
@@ -501,7 +565,16 @@ def slice_stl(stl_path, outdir, support=False, infill=None, pattern=None, walls=
 
 
 class ImplicitFTP_TLS(ftplib.FTP_TLS):
-    """A1 говорит по implicit TLS на 990 — ftplib умеет только explicit."""
+    """A1 говорит по implicit TLS на 990 — ftplib умеет только explicit.
+    Канал данных обязан переиспользовать сессию управляющего: без этого
+    прошивка обрывает передачу на середине и оставляет файл незакрытым."""
+
+    def ntransfercmd(self, cmd, rest=None):
+        conn, size = ftplib.FTP.ntransfercmd(self, cmd, rest)
+        if self._prot_p:
+            conn = self.context.wrap_socket(conn, server_hostname=self.host,
+                                            session=self.sock.session)
+        return conn, size
     def __init__(self, *a, **kw):
         self._sock = None
         super().__init__(*a, **kw)
@@ -530,34 +603,45 @@ def upload(path, name, ip, code):
     """Кладём в /cache: именно там принтер ищет задание, файл в корне он молча отменяет."""
     ctx = ssl._create_unverified_context()
     ftp = ImplicitFTP_TLS(context=ctx)
-    ftp.connect(host=ip, port=990, timeout=30)
+    ftp.connect(host=ip, port=990, timeout=20)
     ftp.login('bblp', code)
     ftp.prot_p()
     try:
         ftp.cwd('/cache')
     except ftplib.error_perm:
         ftp.mkd('/cache'); ftp.cwd('/cache')
-    for old in ftp.nlst():                     # свои прошлые задания подчищаем, чужие не трогаем
-        if old.startswith('pen3d-') and old.endswith('.3mf') and old != name:
-            try: ftp.delete(old)
-            except ftplib.error_perm: pass
+    try:                                       # свои прошлые задания подчищаем, чужие не трогаем
+        for old in ftp.nlst():
+            if old.startswith('pen3d-') and old.endswith('.3mf') and old != name:
+                try: ftp.delete(old)
+                except (ftplib.Error, OSError): pass
+    except (ftplib.Error, OSError, TimeoutError):
+        pass
     with open(path, 'rb') as f:
         try:
             ftp.storbinary(f'STOR {name}', f)
-        except (TimeoutError, ssl.SSLError, OSError):
-            pass                               # принтер не закрывает TLS по-человечески: файл уже долетел
+        except (TimeoutError, socket.timeout, ssl.SSLError, OSError):
+            # прошивка не закрывает TLS-канал так, как ждёт ftplib; файл при этом
+            # может быть дописан — но верить этому можно только увидев ответ 226
+            try:
+                ftp.voidresp()
+            except Exception as e:
+                raise RuntimeError('принтер не подтвердил запись файла — '
+                                   'на карте остался обрывок: ' + str(e)) from e
+    real = os.path.getsize(path)
     try:
         size = ftp.size(name)
     except (ftplib.Error, OSError, TimeoutError):
         size = None
-    try: ftp.quit()
-    except (ftplib.Error, OSError, TimeoutError): pass
-    real = os.path.getsize(path)
+    try:
+        ftp.quit()
+    except (ftplib.Error, OSError, TimeoutError):
+        ftp.close()
     if size is not None and size != real:
         raise RuntimeError(f'файл долетел не целиком: {size} из {real} байт')
 
 
-PRINTER = {'state': {}, 'ts': 0, 'error': None, 'client': None}
+PRINTER = {'state': {}, 'ts': 0, 'error': None, 'client': None, 'replies': []}
 
 
 def printer_watch():
@@ -582,6 +666,11 @@ def printer_watch():
             d = json.loads(msg.payload).get('print') or {}
         except (ValueError, AttributeError):
             return
+        if d.get('command') or 'result' in d or 'reason' in d or 'errno' in d:
+            PRINTER['replies'] = (PRINTER['replies'] + [{
+                'ts': time.strftime('%H:%M:%S'),
+                **{k: d[k] for k in ('command', 'result', 'reason', 'errno', 'sequence_id',
+                                     'param', 'url', 'msg', 'print_error', 'fail_reason') if k in d}}])[-12:]
         if d:
             PRINTER['state'].update(d)
             PRINTER['ts'] = time.time()
@@ -635,47 +724,118 @@ def camera_frames(ip, code):
             yield recv_exact(s, size)
 
 
+ERRORS = {}
+RU_HINTS = {                                   # частые случаи — по-русски и по делу
+    '0500C010': 'сбой чтения microSD: выключи принтер, вынь и вставь карту, при повторе — отформатируй в FAT32 или замени',
+    '05004016': 'microSD защищена от записи — замени карту',
+    '0500402F': 'повреждены сектора microSD — отформатируй или замени карту',
+    '07008011': 'филамент кончился или не подаётся — проверь катушку',
+    '07008012': 'филамент застрял в экструдере',
+    '0300400A': 'не удалось откалибровать стол — очисти сопло и поверхность',
+}
+
+
+def error_text(code):
+    """Принтер отдаёт ошибку числом; человеку нужен код вида 0500-C010 и объяснение."""
+    if not code:
+        return None
+    hexcode = f'{int(code):08X}'
+    if not ERRORS:
+        try:
+            with open(os.path.join(HERE, 'data', 'bambu-errors.tsv')) as f:
+                for line in f:
+                    if line.startswith('#'):
+                        continue
+                    parts = line.rstrip('\n').split('\t')
+                    if len(parts) == 3:
+                        ERRORS[parts[0]] = (parts[1], parts[2])
+        except OSError:
+            pass
+    dashed, text = ERRORS.get(hexcode, (f'{hexcode[:4]}-{hexcode[4:]}', ''))
+    return {'code': dashed, 'hint': RU_HINTS.get(hexcode), 'text': text}
+
+
+def printer_raw():
+    printer_watch()
+    return PRINTER['state']
+
+
 def printer_status():
     printer_watch()
     st = PRINTER['state']
     if not st:
         return {'online': False, 'error': PRINTER['error'] or 'жду ответа принтера'}
     ams = []
-    for a in ((st.get('ams') or {}).get('ams') or []):
-        for tray in a.get('tray', []):
+    vt = st.get('vt_tray') or {}
+    if vt.get('tray_type'):                      # внешняя катушка A1
+        ams.append({'type': vt['tray_type'], 'color': vt.get('tray_color', ''),
+                    'source': 'катушка', 'temp': f"{vt.get('nozzle_temp_min','')}-{vt.get('nozzle_temp_max','')}"})
+    for i, a in enumerate(((st.get('ams') or {}).get('ams') or []), 1):
+        for j, tray in enumerate(a.get('tray', []), 1):
             if tray.get('tray_type'):
-                ams.append({'type': tray['tray_type'], 'color': tray.get('tray_color', '')})
+                ams.append({'type': tray['tray_type'], 'color': tray.get('tray_color', ''),
+                            'source': f'AMS {i}-{j}',
+                            'temp': f"{tray.get('nozzle_temp_min','')}-{tray.get('nozzle_temp_max','')}"})
     age = round(time.time() - PRINTER['ts'])
     return {
         'online': age < 120, 'age': age, 'error': PRINTER['error'],
         'state': st.get('gcode_state'), 'error_code': st.get('print_error'),
+        'error_info': error_text(st.get('print_error')),
         'percent': st.get('mc_percent'), 'remaining': st.get('mc_remaining_time'),
         'layer': st.get('layer_num'), 'layers': st.get('total_layer_num'),
         'job': st.get('subtask_name') or '',
         'nozzle': st.get('nozzle_temper'), 'nozzle_target': st.get('nozzle_target_temper'),
         'bed': st.get('bed_temper'), 'bed_target': st.get('bed_target_temper'),
-        'wifi': st.get('wifi_signal'), 'filament': ams,
+        'wifi': st.get('wifi_signal'), 'filament': ams, 'material': loaded_material(),
     }
 
 
+def start_print_gcode(name, ip, code, serial):
+    """A1 и другие P1-модели печатают прямой gcode: команда gcode_file и путь на карте."""
+    import paho.mqtt.client as mqtt
+    payload = {'print': {'sequence_id': str(int(time.time() * 1000)),
+                         'command': 'gcode_file', 'param': f'/cache/{name}'}}
+    topic = f'device/{serial}/request'
+    live = PRINTER.get('client')
+    if live and live.is_connected():
+        live.publish(topic, json.dumps(payload), qos=1).wait_for_publish(10)
+        return
+    c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    c.username_pw_set('bblp', code)
+    c.tls_set(cert_reqs=ssl.CERT_NONE, tls_version=ssl.PROTOCOL_TLS_CLIENT)
+    c.tls_insecure_set(True)
+    c.connect(ip, 8883, 30); c.loop_start()
+    c.publish(topic, json.dumps(payload), qos=1).wait_for_publish(10)
+    time.sleep(1); c.loop_stop(); c.disconnect()
+
+
 def start_print(name, ip, code, serial, md5=None):
+    """Публикуем через уже открытый клиент статуса: A1 разрывает связь,
+    если параллельно ломиться вторым MQTT-подключением."""
     import paho.mqtt.client as mqtt
     # url именно ftp:///cache/... — с file:///sdcard/... принтер молча отменяет задание,
     # а md5 обязателен: без него файл считается битым. Ключ bed_levelling пишется с двумя l.
     payload = {"print": {
         "sequence_id": "1", "command": "project_file", "param": "Metadata/plate_1.gcode",
-        "url": f"ftp:///cache/{name}", "subtask_name": name.rsplit('.', 1)[0],
+        "url": f"ftp:///cache/{name}",
+        "subtask_name": re.sub(r'\.(gcode\.3mf|3mf|gcode)$', '', name),
         "md5": (md5 or '').upper(), "ams_mapping": "",
         "bed_type": "auto", "timelapse": False, "bed_levelling": True, "flow_cali": True,
         "vibration_cali": False, "layer_inspect": True, "use_ams": False,
         "profile_id": "0", "project_id": "0", "subtask_id": "0", "task_id": "0"}}
+    topic = f'device/{serial}/request'
+    live = PRINTER.get('client')
+    if live and live.is_connected():
+        info = live.publish(topic, json.dumps(payload), qos=1)
+        info.wait_for_publish(10)
+        return
     c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     c.username_pw_set('bblp', code)
     c.tls_set(cert_reqs=ssl.CERT_NONE, tls_version=ssl.PROTOCOL_TLS_CLIENT)
     c.tls_insecure_set(True)
     c.connect(ip, 8883, 30)
     c.loop_start()
-    info = c.publish(f'device/{serial}/request', json.dumps(payload), qos=1)
+    info = c.publish(topic, json.dumps(payload), qos=1)
     info.wait_for_publish(10)
     time.sleep(1)
     c.loop_stop(); c.disconnect()
@@ -697,6 +857,15 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         p = self.path.split('?')[0].rstrip('/')
+        if p.endswith('/printer/replies'):
+            printer_watch()
+            return self._send(200, {'replies': PRINTER['replies']})
+        if p.endswith('/printer/raw'):
+            st = printer_raw()
+            return self._send(200, {k: st.get(k) for k in
+                                    ('ams', 'vt_tray', 'ams_status', 'ams_rfid_status', 'gcode_state',
+                                     'print_type', 'mc_print_stage', 'hw_switch_state', 'fail_reason',
+                                     'print_error', 'home_flag', 'nozzle_type', 'nozzle_diameter')})
         if p.endswith('/printer'):
             try:
                 return self._send(200, printer_status())
@@ -757,6 +926,18 @@ class H(BaseHTTPRequestHandler):
             return self._send(500, {'error': f'{type(e).__name__}: {e}'})
         if self.path.rstrip('/').endswith('/ai'):
             return self.do_ai(json.loads(body))
+        if self.path.rstrip('/').endswith('/run-file'):
+            try:
+                c = cfg()
+                req = json.loads(body or b'{}')
+                name = req.get('name') or ''
+                if req.get('mode') == 'gcode':
+                    start_print_gcode(name, c['ip'], c['code'], c['serial'])
+                else:
+                    start_print(name, c['ip'], c['code'], c['serial'], req.get('md5'))
+                return self._send(200, {'ok': True, 'sent': name, 'mode': req.get('mode', 'project')})
+            except Exception as e:
+                return self._send(500, {'error': f'{type(e).__name__}: {e}'})
         if self.path.rstrip('/').endswith('/agent/stop'):
             STOP['flag'] = True
             return self._send(200, {'ok': True})
@@ -766,11 +947,12 @@ class H(BaseHTTPRequestHandler):
             return self.do_agent(json.loads(body))
         stl = body
         support = self.headers.get('x-support') == '1'
+        bed = self.headers.get('x-bed') or 'Textured PEI Plate'
         if self.path.rstrip('/').endswith('/estimate'):
             try:
                 return self._send(200, self.do_estimate(
                     stl, support, self.headers.get('x-infill'),
-                    self.headers.get('x-pattern'), self.headers.get('x-walls')))
+                    self.headers.get('x-pattern'), self.headers.get('x-walls'), bed))
             except Exception as e:
                 return self._send(500, {'error': f'{type(e).__name__}: {e}'})
         infill = self.headers.get('x-infill')
@@ -779,14 +961,15 @@ class H(BaseHTTPRequestHandler):
         do_print = self.path.rstrip('/').endswith('/print')
         try:
             c = cfg()
-            mf, _td = sliced(stl, support, infill, pattern, walls)
+            mf, _td = sliced(stl, support, infill, pattern, walls, None, bed)
             if True:
-                name = f'pen3d-{uuid.uuid4().hex[:6]}.3mf'
+                name = f'pen3d-{uuid.uuid4().hex[:6]}.gcode.3mf'
                 upload(mf, name, c['ip'], c['code'])
                 if do_print:
                     start_print(name, c['ip'], c['code'], c['serial'], file_md5(mf))
             self._send(200, {'ok': True, 'file': name, 'printing': do_print,
-                             'support': support, 'infill': infill})
+                             'support': support, 'infill': infill,
+                             'material': loaded_material()})
         except Exception as e:
             self._send(500, {'error': f'{type(e).__name__}: {e}'})
 
@@ -816,11 +999,11 @@ class H(BaseHTTPRequestHandler):
     def do_ai_log(self):
         self._send(200, {'rows': db.log_rows()})
 
-    def do_estimate(self, stl, support, infill, pattern, walls):
+    def do_estimate(self, stl, support, infill, pattern, walls, bed='Textured PEI Plate'):
         """Bambu CLI оставляет вес и плотность нулевыми, поэтому берём длину прутка
         из gcode и считаем массу сами — из профиля филамента."""
         import zipfile
-        mf, td = sliced(stl, support, infill, pattern, walls)
+        mf, td = sliced(stl, support, infill, pattern, walls, None, bed)
         z = zipfile.ZipFile(mf)
         g = z.read('Metadata/plate_1.gcode').decode('utf-8', 'replace')
         info = z.read('Metadata/slice_info.config').decode('utf-8', 'replace')

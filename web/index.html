@@ -132,6 +132,9 @@ code{font:11px ui-monospace,monospace;color:var(--dim)}
 .pr-row b{color:var(--ink);font-weight:600}
 .pr .dot{width:8px;height:8px;border-radius:50%;background:#555c68;flex:none}
 .pr.on .dot{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+#gear-row{display:grid;gap:4px;margin-top:2px}
+#gear-row .f{display:flex;justify-content:space-between;align-items:center;gap:6px;font-size:11px;color:var(--dim)}
+#gear-row .f input{width:64px}
 button.busy{position:relative;overflow:hidden;color:var(--dim)}
 button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:40%;
   background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:.25;
@@ -221,6 +224,12 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
         <button id="send">Залить на A1</button>
         <button id="print">Печатать сейчас</button>
         <label class="f chk">поддержки <input id="sup" type="checkbox"></label>
+        <label class="f">пластина <select id="bed" style="padding:2px 4px;font-size:12px">
+          <option value="Textured PEI Plate">текстурированная PEI / HDT</option>
+          <option value="High Temp Plate">высокотемпературная</option>
+          <option value="Engineering Plate">инженерная</option>
+          <option value="Cool Plate">холодная (Cool Plate)</option>
+        </select></label>
         <label class="f">заполнение, % <input id="infill" type="number" value="15" min="0" max="100" step="5"></label>
         <label class="f">узор <select id="pattern" style="padding:2px 4px;font-size:12px">
           <option value="gyroid">гироид</option>
@@ -278,6 +287,12 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
         <button data-add="wedge">◺ Клин</button>
         <button data-add="thread">⌁ Резьба</button>
         <button id="sketch" style="grid-column:1/-1">✎ Нарисовать эскиз</button>
+        <div id="gear-row" style="grid-column:1/-1">
+          <label class="f">зубьев <input id="g-z" type="number" min="6" max="200" step="1" value="17"></label>
+          <label class="f">модуль <input id="g-m" type="number" min="0.3" max="10" step="0.1" value="2"></label>
+          <button id="gear">⚙ Поставить шестерню</button>
+          <div class="hint" id="gear-hint"></div>
+        </div>
       </div>
     </div>
 
