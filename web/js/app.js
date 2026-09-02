@@ -66,9 +66,9 @@ let bedNow = null;                             // фактическая тем�
 
 function bedColor(temp, active){
   const k = Math.max(0, Math.min(1, ((temp ?? 25) - 25) / 75));   // 25° → 0, 100° → 1
-  const cold = new THREE.Color(0x1b2635), hot = new THREE.Color(0x4a2318);
+  const cold = new THREE.Color(0x1a222e), hot = new THREE.Color(0x33231e);
   const c = cold.clone().lerp(hot, k);
-  return active ? c.multiplyScalar(1.35) : c.multiplyScalar(.75);
+  return active ? c.multiplyScalar(1.15) : c.multiplyScalar(.7);
 }
 
 function plateTemp(){
