@@ -148,7 +148,8 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
 .pr.err .dot{background:var(--danger);box-shadow:0 0 8px var(--danger)}
 .pr .bar{height:5px;border-radius:3px;background:#22262e;overflow:hidden;margin:5px 0 2px}
 .pr .bar i{display:block;height:100%;background:var(--accent);transition:width .4s}
-.pr .t{font-variant-numeric:tabular-nums;color:var(--ink)}
+.pr .t{font-variant-numeric:tabular-nums;color:var(--ink);display:inline-flex;align-items:center;gap:5px}
+.pr .t .sw{width:9px;height:9px;border-radius:2px;display:inline-block;border:1px solid rgba(255,255,255,.25)}
 .obj button{padding:1px 5px;font-size:11px;background:transparent;border-color:transparent;color:var(--dim)}
 .obj button:hover{color:var(--ink);background:#232733}
 </style>
@@ -333,6 +334,7 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
         <div class="acts">
           <button class="sm" id="center" title="совместить с центром детали">Центрировать</button>
           <button class="sm" id="drop" title="опустить деталь на стол">На стол</button>
+          <button class="sm" id="group" title="связать деталь: все касающиеся тела поедут вместе">Сгруппировать</button>
           <button class="sm" id="ungroup" title="разорвать связь с группой">Разгруппировать</button>
           <button class="sm" id="sink" title="опустить отверстие на 1 мм ниже дна">Утопить снизу</button>
         </div>

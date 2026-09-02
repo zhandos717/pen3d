@@ -737,8 +737,11 @@ async function pollPrinter(){
         <span class="t">${Math.round(p.nozzle || 0)}°${p.nozzle_target ? ' → ' + Math.round(p.nozzle_target) + '°' : ''}</span></div>
       <div class="pr-row"><span>стол</span>
         <span class="t">${Math.round(p.bed || 0)}°${p.bed_target ? ' → ' + Math.round(p.bed_target) + '°' : ''}</span></div>
-      ${p.filament.length ? `<div class="pr-row"><span>филамент</span><span class="t">${p.filament.map(f => esc(f.type)).join(', ')}</span></div>` : ''}
-      ${p.error_code ? `<div style="color:var(--danger)">ошибка принтера: ${p.error_code}</div>` : ''}
+      ${p.filament.length ? p.filament.map(f => `<div class="pr-row"><span>${esc(f.source || t('филамент'))}</span>
+        <span class="t"><i class="sw" style="background:#${esc((f.color||'').slice(0,6) || '888')}"></i>${esc(f.type)}${f.temp && f.temp !== '-' ? ' · ' + esc(f.temp) + '°' : ''}</span></div>`).join('')
+        : `<div class="pr-row"><span>${t('филамент')}</span><span class="t">${t('не определён')}</span></div>`}
+      ${p.error_code && p.error_info ? `<div style="color:var(--danger);margin-top:4px">
+        <b>${t('ошибка')} ${esc(p.error_info.code)}</b><br>${esc(p.error_info.hint || p.error_info.text || '')}</div>` : ''}
       ${p.age > 30 ? `<div>данные ${p.age} с назад</div>` : ''}`;
   }catch(e){
     box.className = 'pr err';
@@ -824,6 +827,35 @@ $('take').onclick = () => {
     .concat(theirs.map(o => ({...o, plate:0, grp, x: +(o.x + shift).toFixed(2)})));
   selId = null; sync();
   say(`забрано со стола агента: ${theirs.length} · двигаются вместе, «Разгруппировать» разрывает связь`, 'ok');
+};
+
+// Деталь — это связка касающихся тел, поэтому в группу берём не всё подряд,
+// а всё, что реально соединено с выбранной фигурой.
+function connectedTo(start){
+  const boxOf = o => { const m = meshOf(o.id); if(!m) return null;
+    m.updateMatrixWorld(); return new THREE.Box3().setFromObject(m).expandByScalar(0.2); };
+  const pool = objects.filter(o => o.vis && (o.plate || 0) === (start.plate || 0));
+  const boxes = new Map(pool.map(o => [o.id, boxOf(o)]));
+  const got = [start];
+  for(let i = 0; i < got.length; i++){
+    const b = boxes.get(got[i].id); if(!b) continue;
+    for(const o of pool){
+      if(got.includes(o)) continue;
+      const b2 = boxes.get(o.id);
+      if(b2 && b.intersectsBox(b2)) got.push(o);
+    }
+  }
+  return got;
+}
+
+$('group').onclick = () => {
+  const o = sel();
+  if(!o) return say('выбери любую часть детали', 'err');
+  const part = connectedTo(o);
+  if(part.length < 2) return say('эта фигура ни с чем не соединена — двигать нечего вместе', 'err');
+  const grp = 'g' + Date.now();
+  push(); part.forEach(x => x.grp = grp); sync();
+  say(`связано тел: ${part.length} · теперь двигаются вместе`, 'ok');
 };
 
 $('ungroup').onclick = () => {
