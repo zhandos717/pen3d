@@ -321,6 +321,9 @@ $('hud-hide').onclick = () => { hudOff = true;
   say('панель скрыта — выбери фигуру заново, чтобы вернуть'); };
 $('hud-dup').onclick = () => $('dup').click();
 $('hud-del').onclick = () => $('del').click();
+$('hud-center').onclick = () => $('center').click();
+$('hud-drop').onclick = () => $('drop').click();
+$('hud-group').onclick = () => $('group').click();
 
 $('dup').onclick = () => { const o = sel(); if(!o) return;
   push();
