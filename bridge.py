@@ -213,7 +213,7 @@ def from_template(task):
         return [_shape('головка', 'poly', sides=6, w=wrench, d=wrench, h=hh),
                 _shape(f'стержень M{d}', 'thread', dia=d, pitch=pitch, h=L, z=hh - 1)]
     if 'шайб' in t or 'washer' in t:
-        return [_shape(f'шайба M{d}', 'cyl', w=d * 2.2, d=d * 2.2, h=max(1.6, d * 0.2)),
+        return [_shape(f'шайба M{d}', 'cyl', w=d * 2.2, d=d * 2.2, h=max(2, round(d * 0.2, 1))),
                 _shape('отверстие', 'cyl', w=d + 0.4, d=d + 0.4, h=d, z=-1, hole=True)]
     return None
 
@@ -288,6 +288,7 @@ def run_agent(task, scene, model, base, key, on_event=None, max_steps=10, legacy
         headers['authorization'] = 'Bearer ' + key
 
     STOP['flag'] = False
+    finished = False
     tpl = None if (scene or legacy) else from_template(task)
     if tpl:
         for o in tpl:
@@ -298,8 +299,11 @@ def run_agent(task, scene, model, base, key, on_event=None, max_steps=10, legacy
                           'args': {'name': o['name']}, 'result': {'id': o['id']}, 'shapes': shapes})
         trace.append({'step': 0, 'tool': 'template', 'args': {'task': task},
                       'result': {'bodies': len(tpl)}})
-        return {'objects': shapes, 'trace': trace, 'problems': check_scene(shapes),
-                'usage': usage, 'stopped': False, 'template': True}
+        problems = check_scene(shapes)
+        return {'objects': shapes, 'trace': trace, 'problems': problems,
+                'usage': usage, 'stopped': False, 'template': True,
+                'reason': 'finished' if not problems else 'failed_check',
+                'steps_used': 0, 'steps_left': max_steps}
 
     for step in range(max_steps):
         if STOP['flag']:
@@ -343,7 +347,7 @@ def run_agent(task, scene, model, base, key, on_event=None, max_steps=10, legacy
                     result = {'error': 'ещё есть проблемы, исправь их', 'problems': problems}
                 else:
                     result = {'ok': True}
-                    done = True
+                    done = finished = True
             else:
                 result = call(fn, args)
             trace.append({'step': step, 'tool': fn, 'args': args, 'result': result})
@@ -360,8 +364,20 @@ def run_agent(task, scene, model, base, key, on_event=None, max_steps=10, legacy
         if done:
             break
 
-    return {'objects': shapes, 'trace': trace, 'problems': check_scene(shapes),
-            'usage': usage, 'stopped': STOP['flag']}
+    problems = check_scene(shapes)
+    used = usage['steps']
+    # случаев четыре, и UI должен их различать — поэтому строка, а не флаг
+    if STOP['flag']:
+        reason = 'stopped'
+    elif finished and problems:
+        reason = 'failed_check'
+    elif finished:
+        reason = 'finished'
+    else:
+        reason = 'max_steps'
+    return {'objects': shapes, 'trace': trace, 'problems': problems, 'usage': usage,
+            'stopped': STOP['flag'], 'reason': reason,
+            'steps_used': used, 'steps_left': max(0, max_steps - used)}
 
 
 def log_ai(model, prompt, answer, usage=None, error=None):
@@ -769,7 +785,8 @@ class H(BaseHTTPRequestHandler):
 def selfcheck_templates():
     """Шаблоны собираются без модели, поэтому ошибку в них никто не поймает
     до самой печати — гоняем через ту же проверку, что и работу агента."""
-    cases = ['гайка M14', 'болт M8 на 40 мм', 'шайба M10', 'винт M6 длиной 25']
+    cases = ['гайка M14', 'болт M8 на 40 мм', 'шайба M10', 'шайба M6', 'шайба M3',
+             'винт M6 длиной 25', 'гайка M3', 'болт M20 на 60']
     for t in cases:
         bodies = from_template(t)
         assert bodies, f'шаблон не сработал: {t}'
