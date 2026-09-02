@@ -7,3 +7,6 @@ out.3mf
 *.stl
 *.3mf
 .DS_Store
+pen3d.db
+pen3d.db-shm
+pen3d.db-wal

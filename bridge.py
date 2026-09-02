@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Мост браузер -> Bambu Lab A1 в LAN Mode: STL -> слайс -> FTPS -> MQTT print."""
 import ftplib, json, os, socket, ssl, subprocess, sys, tempfile, time, uuid
+
+import db
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(HERE, 'web')
-AI_LOG = os.path.join(HERE, 'ai-log.jsonl')
 CFG = os.path.expanduser('~/.pen3d.json')
 STUDIO = '/Applications/BambuStudio.app/Contents/MacOS/BambuStudio'
 SYS = os.path.expanduser('~/Library/Application Support/BambuStudio/system/BBL')
@@ -240,14 +241,11 @@ def run_agent(task, scene, model, base, key):
 
 
 def log_ai(model, prompt, answer, usage=None, error=None):
-    """Ответы моделей копятся в ai-log.jsonl — по ним видно, кто и как врёт."""
-    rec = {'ts': time.strftime('%Y-%m-%d %H:%M:%S'), 'model': model,
-           'task': prompt.split('Деталь: ')[-1][:400] if prompt else '',
-           'answer': answer, 'usage': usage, 'error': error}
+    """Ответы моделей копятся в базе — по ним видно, кто и как врёт."""
+    task = prompt.split('Деталь: ')[-1][:400] if prompt else ''
     try:
-        with open(AI_LOG, 'a') as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + '\n')
-    except OSError:
+        db.log_add(model, task, answer, usage, error)
+    except Exception:
         pass
 
 
@@ -353,8 +351,12 @@ class H(BaseHTTPRequestHandler):
         self._send(200, {})
 
     def do_GET(self):
-        if self.path.split('?')[0].rstrip('/').endswith('/ai-log'):
+        p = self.path.split('?')[0].rstrip('/')
+        if p.endswith('/ai-log'):
             return self.do_ai_log()
+        if p == '/api/state':
+            return self._send(200, {'scene': db.scene_get(), 'sketches': db.sketches(),
+                                    'tokens': db.counter_get()})
         rel = self.path.split('?')[0].lstrip('/') or 'index.html'
         path = os.path.normpath(os.path.join(WEB, rel))
         if not path.startswith(WEB) or not os.path.isfile(path):
@@ -371,7 +373,22 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        body = self.rfile.read(int(self.headers['content-length']))
+        body = self.rfile.read(int(self.headers.get('content-length') or 0))
+        p = self.path.rstrip('/')
+        try:
+            if p == '/api/scene':
+                db.scene_put(json.loads(body))
+                return self._send(200, {'ok': True})
+            if p == '/api/sketches':
+                return self._send(200, {'id': db.sketch_add(json.loads(body))})
+            if p.startswith('/api/sketches/'):
+                db.sketch_del(int(p.rsplit('/', 1)[1]))
+                return self._send(200, {'ok': True})
+            if p == '/api/tokens':
+                db.counter_put(json.loads(body))
+                return self._send(200, {'ok': True})
+        except Exception as e:
+            return self._send(500, {'error': f'{type(e).__name__}: {e}'})
         if self.path.rstrip('/').endswith('/ai'):
             return self.do_ai(json.loads(body))
         if self.path.rstrip('/').endswith('/agent'):
@@ -398,15 +415,7 @@ class H(BaseHTTPRequestHandler):
             self._send(500, {'error': f'{type(e).__name__}: {e}'})
 
     def do_ai_log(self):
-        try:
-            with open(AI_LOG) as f:
-                rows = [json.loads(l) for l in f if l.strip()]
-        except OSError:
-            rows = []
-        for r in rows:
-            if r.get('answer'):
-                r['answer'] = r['answer'][-1500:]
-        self._send(200, {'rows': rows[-30:]})
+        self._send(200, {'rows': db.log_rows()})
 
     def do_agent(self, req_body):
         import urllib.request
@@ -494,6 +503,7 @@ if __name__ == '__main__':
         print(f'! Нет {CFG} — рисовать и качать STL можно, печать и AI не будут работать.\n'
               '  Создай: {"ip":"192.168.1.50","code":"12345678","serial":"01P00A...","deepseek_key":"sk-..."}\n'
               '  IP и Access Code — на экране A1: Settings > Network (LAN Only Mode), serial там же.')
+    db.init()
     host = '0.0.0.0' if '--lan' in sys.argv else '127.0.0.1'
     port = 8765
     print(f'pen3d: http://{"127.0.0.1" if host == "127.0.0.1" else socket.gethostbyname(socket.gethostname())}:{port}'
