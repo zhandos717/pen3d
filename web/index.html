@@ -282,10 +282,13 @@ code{font:11px ui-monospace,monospace;color:var(--dim)}
             <button class="sm" data-align="rz" title="наклон Z к 90°">Z</button>
           </div>
           <label class="f" id="p-sides-row">граней <input id="p-sides" type="number" step="1" min="3" max="64"></label>
+          <label class="f" id="p-shell-row">стенка, мм <input id="p-shell" type="number" step="0.5" min="0" value="0"></label>
+          <label class="f chk" id="p-open-row">открыть сверху <input id="p-openTop" type="checkbox"></label>
           <label class="f" id="p-dia-row">Ø резьбы <input id="p-dia" type="number" step="1" min="2"></label>
           <label class="f" id="p-pitch-row">шаг, мм <input id="p-pitch" type="number" step="0.25" min="0.3"></label>
         </div>
         <div class="pair" style="margin-top:6px">
+          <button class="sm" id="center">Центрировать в детали</button>
           <button class="sm" id="drop">Посадить на стол</button>
           <button class="sm" id="ungroup">Разгруппировать</button>
           <button class="sm" id="sink" title="опустить отверстие на 1 мм ниже дна">Утопить снизу</button>

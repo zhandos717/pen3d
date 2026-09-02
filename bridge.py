@@ -135,6 +135,13 @@ def check_scene(shapes):
         for k in ('w', 'd', 'h'):
             if 0 < o.get(k, 10) < 2:
                 problems.append(f'{o["name"]}: размер {k}={o[k]} мм тоньше 2 мм, сломается')
+        shell = o.get('shell') or 0
+        if 0 < shell < 1.2:
+            problems.append(f'{o["name"]}: стенка {shell} мм тоньше 1.2 мм, продавится')
+        if shell and not o.get('openTop'):
+            span = round(max(o.get('w', 0), o.get('d', 0)) - 2*shell)
+            problems.append(f'{o["name"]}: полость закрыта сверху — мостик {span} мм провиснет, '
+                            'открой верх или добавь крышку отдельной деталью')
 
     for o in holes:
         eats = solids and all(

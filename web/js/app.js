@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { unitGeo } from './geometry.js';
-import { buildResult } from './csg.js';
+import { buildResult, holeGhost } from './csg.js';
 import { meshToStl } from './stl.js';
 import { PROMPT, PROVIDERS, sanitize } from './ai.js';
 
@@ -102,6 +102,33 @@ function solidMat(color){
   if(!matCache.has(c)) matCache.set(c, new THREE.MeshStandardMaterial({color:c, roughness:.5, metalness:.05}));
   return matCache.get(c);
 }
+const GHOST = new THREE.MeshStandardMaterial({color:0xff5a76, roughness:.4, metalness:0,
+  transparent:true, opacity:.55, depthWrite:false});
+const GHOST_EDGE = new THREE.LineDashedMaterial({color:0xffd0d8, dashSize:2.2, gapSize:1.6});
+let ghost = null;
+
+// Видно, какая часть отверстия реально сидит в детали, а какая торчит наружу
+function updateGhost(){
+  if(ghost){ ghost.traverse(o => o.geometry?.dispose()); scene.remove(ghost); ghost = null; }
+  const o = sel();
+  if(!o || !o.hole || !o.vis || showResult) return;
+  const solids = objects.filter(x => x.vis && !x.hole && (x.plate || 0) === (o.plate || 0));
+  let res = null;
+  try{ res = holeGhost(o, solids, (q, m) => objToMesh(q, m), GHOST); }
+  catch(e){ return; }
+  if(!res){ ghostDepth = null; return; }
+  ghost = new THREE.Group();
+  const body = new THREE.Mesh(res.geometry, GHOST);
+  ghost.add(body);
+  const edges = new THREE.LineSegments(new THREE.EdgesGeometry(res.geometry, 25), GHOST_EDGE);
+  edges.computeLineDistances();
+  ghost.add(edges);
+  scene.add(ghost);
+  const sz = new THREE.Vector3(); res.box.getSize(sz);
+  ghostDepth = {size: sz, center: res.box.getCenter(new THREE.Vector3()), top: res.box.max.y};
+}
+let ghostDepth = null;
+
 const MAT = {
   solid: new THREE.MeshStandardMaterial({color:0x2dd4a7, roughness:.5, metalness:.05}),
   hole:  new THREE.MeshStandardMaterial({color:0xd0455f, roughness:.6, transparent:true, opacity:.45}),
@@ -156,7 +183,7 @@ function sync(){
   });
   const s = sel();
   if(s && s.vis && !showResult && !sketching) gizmo.attach(meshOf(s.id)); else gizmo.detach();
-  renderList(); fillProps(); updateDims();
+  renderList(); fillProps(); updateDims(); updateGhost();
   if(showResult) rebuild();
   persist();
 }
@@ -192,6 +219,7 @@ $('redo').onclick = () => { if(!redoStack.length) return; hist.push(snapshot());
 let gizmoStart = null;
 gizmo.addEventListener('mouseDown', () => gizmoStart = snapshot());
 function gizmoDone(){
+  updateGhost();
   if(gizmoStart && gizmoStart !== snapshot()){ hist.push(gizmoStart); redoStack.length = 0; }
   gizmoStart = null; sync();
 }
@@ -238,7 +266,7 @@ function add(type, extra={}){
                  sphere:'Шар', cone:'Конус', torus:'Кольцо', wedge:'Клин'};
   const o = {id: nextId, name: NAMES[type] + ' ' + nextId,
     type, x:0, y:0, z:0, w:30, d:30, h:10, rot:0, rx:0, rz:0, sides:6, dia:10, pitch:1.5,
-    color:'#2dd4a7', hole:false, vis:true, ...extra};
+    color:'#2dd4a7', shell:0, openTop:false, hole:false, vis:true, ...extra};
   if(['cyl','poly','cone','sphere','torus','wedge'].includes(type)) o.h = 15;
   if(type === 'thread'){ o.h = 20; o.w = o.d = o.dia; }
   if(!('x' in extra)) Object.assign(o, freeSpot(o));
@@ -260,7 +288,7 @@ function select(id){
   const s = sel();
   if(s && s.vis && !showResult && !sketching) gizmo.attach(meshOf(s.id)); else gizmo.detach();
   document.querySelectorAll('#list .obj').forEach(r => r.classList.toggle('sel', +r.dataset.id === selId));
-  fillProps(); if(s) say(s.name);
+  fillProps(); updateGhost(); if(s) say(s.name);
 }
 
 // ---------- список ----------
@@ -297,13 +325,16 @@ document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
 const showTab = t => document.querySelector(`.tabs button[data-tab="${t}"]`).click();
 
 // ---------- свойства ----------
-const P = ['name','hole','vis','color','w','d','h','x','y','z','rot','rx','rz','sides','dia','pitch'];
+const P = ['name','hole','vis','color','w','d','h','x','y','z','rot','rx','rz','sides','dia','pitch','shell','openTop'];
 function fillProps(){
   const o = sel(); $('props').hidden = !o; $('noprops').hidden = !!o; if(!o) return;
   for(const k of P){ const el = $('p-' + k);
     if(el.type === 'checkbox') el.checked = o[k]; else if(document.activeElement !== el) el.value = o[k]; }
   $('p-sides-row').style.display = o.type === 'poly' ? '' : 'none';
   const th = o.type === 'thread';
+  const hollow = ['box','cyl','poly'].includes(o.type) && !o.hole;
+  $('p-shell-row').style.display = hollow ? '' : 'none';
+  $('p-open-row').style.display = hollow && o.shell > 0 ? '' : 'none';
   $('p-dia-row').style.display = $('p-pitch-row').style.display = th ? '' : 'none';
   $('p-w').disabled = $('p-d').disabled = th;
 }
@@ -315,6 +346,13 @@ P.forEach(k => {
     if(k === 'sides') v = Math.max(3, Math.min(64, Math.round(v)));
     if(k === 'dia') v = Math.max(2, v);
     if(k === 'pitch') v = Math.max(.3, Math.min(v, 5));
+    if(k === 'shell'){
+      v = Math.max(0, v);
+      const lim = +(Math.min(o.w, o.d, o.h)/2 - .2).toFixed(1);
+      if(v > 0 && v < .8){ say('стенка тоньше 0.8 мм — печатать нечем, поднял до 0.8', 'err'); v = .8; }
+      if(v > lim){ say(`стенка не может быть толще ${lim} мм для этой детали`, 'err'); v = Math.max(0, lim); }
+      if(v > 0 && !o.shell) o.openTop = true;     // закрытая полость = мостик через всю деталь
+    }
     if('wdh'.includes(k)) v = Math.max(.2, v);
     if(k === 'z') v = o.hole ? v : Math.max(0, v);
     if(k === 'rot' || k === 'rx' || k === 'rz') v = ((v % 360) + 360) % 360;
@@ -343,6 +381,27 @@ $('sink').onclick = () => {
   push(); o.z = -1; sync(); say('отверстие утоплено на 1 мм ниже стола');
 };
 
+// закрытая сверху полость — мостик во всю ширину, слайсер его провесит
+function shellWarning(){
+  const bad = objects.filter(o => o.vis && !o.hole && o.shell > 0 && !o.openTop);
+  if(!bad.length) return '';
+  const w = Math.max(...bad.map(o => Math.max(o.w, o.d) - 2*o.shell));
+  return ` · полость закрыта сверху: мостик ${w.toFixed(0)} мм провиснет, включи «открыть сверху»`;
+}
+
+$('center').onclick = () => {
+  const o = sel(); if(!o) return say('выбери фигуру', 'err');
+  const hosts = objects.filter(x => !x.hole && x.vis && x !== o && (x.plate||0) === (o.plate||0));
+  if(!hosts.length) return say('не с чем совмещать — на столе нет тел', 'err');
+  const inside = hosts.find(x => Math.abs(o.x - x.x) <= x.w/2 && Math.abs(o.y - x.y) <= x.d/2);
+  const host = inside || hosts.reduce((a, b) =>
+    Math.hypot(a.x-o.x, a.y-o.y) < Math.hypot(b.x-o.x, b.y-o.y) ? a : b);
+  push(); o.x = host.x; o.y = host.y; sync();
+  say(inside ? `по центру «${host.name}»`
+             : `фигура была не внутри детали — поставил по центру ближайшей «${host.name}»`,
+      inside ? '' : 'err');
+};
+
 $('drop').onclick = () => {
   const o = sel(), m = o && meshOf(o.id); if(!m) return;
   m.updateMatrixWorld();
@@ -359,9 +418,10 @@ function updateDims(){
   const s = new THREE.Vector3(); box.getSize(s);
   const over = s.x > BED || s.z > BED || s.y > BED;
   const sunk = box.min.y < -0.2;
+  const warn = shellWarning();
   $('dims').textContent = `${s.x.toFixed(1)} × ${s.z.toFixed(1)} × ${s.y.toFixed(1)} мм · стол A1 256×256×256`
-    + (over ? ' · НЕ ВЛЕЗАЕТ' : '') + (sunk ? ' · ниже стола' : '');
-  $('dims').style.color = over || sunk ? 'var(--danger)' : '';
+    + (over ? ' · НЕ ВЛЕЗАЕТ' : '') + (sunk ? ' · ниже стола' : '') + warn;
+  $('dims').style.color = over || sunk || warn ? 'var(--danger)' : '';
 }
 
 // ---------- гизмо / выбор ----------
@@ -735,9 +795,18 @@ $('gen').onclick = async e => {
       objects = objects.filter(o => !o.plate).concat(got);
       nextId = Math.max(0, ...objects.map(o => o.id)) + 1;
       selId = null; sync(); loadLog(); addTokens(j.usage);
-      const steps = j.trace.filter(t => t.tool).length;
-      say((j.stopped ? 'агент остановлен' : 'агент собрал деталь на своём столе') + ` · шагов: ${steps}` +
-          (j.problems.length ? ` · осталось: ${j.problems[0]}` : ''), j.problems.length ? 'err' : 'ok');
+      const steps = j.steps_used ?? j.trace.filter(t => t.tool).length;
+      const bodies = j.objects.filter(o => !o.hole).length;
+      const REASON = {
+        finished: [`деталь готова · тел ${bodies}` + (j.template ? ' · по шаблону, без запроса к модели'
+                                                    : ` · шагов ${steps}`), 'ok'],
+        stopped:  [`остановлено тобой · тел ${bodies}, шагов ${steps} — деталь не доделана`, ''],
+        max_steps:[`кончились шаги (${steps}) · тел ${bodies} — деталь может быть не доделана,`
+                   + ' подними лимит и повтори', 'err'],
+        failed_check: [`агент закончил, но деталь с браком · тел ${bodies}`, 'err'],
+      };
+      const [text, kind] = REASON[j.reason] || [`готово · шагов ${steps}`, 'ok'];
+      say(text + (j.problems.length ? ` · ${j.problems[0]}` : ''), j.problems.length ? 'err' : kind);
       btn.disabled = false; btn.textContent = 'Сгенерировать';
       return;
     }
@@ -867,6 +936,19 @@ function drawLabels(){
   label(i++, act === 1 ? 'СТОЛ АГЕНТА · в печать' : 'стол агента',
         V(PLATE_GAP, 0, -BED/2 - 14), act === 1 ? '' : 'bed');
 
+  // глубина захода отверстия
+  const selObj = sel();
+  if(ghostDepth && selObj && selObj.hole){
+    const c = ghostDepth.center, s2 = ghostDepth.size;
+    label(i++, `в детали ${s2.y.toFixed(1)} мм`, V(c.x, ghostDepth.top + 4, c.z));
+    const out = selObj.h - s2.y;
+    if(out > 0.2) label(i++, `снаружи ${out.toFixed(1)} мм`,
+                        V(c.x, selObj.z + selObj.h + 3, c.z), 'bed');
+  } else if(selObj && selObj.hole && selObj.vis && !showResult){
+    const m = meshOf(selObj.id);
+    if(m) label(i++, 'не задевает деталь', V(m.position.x, m.position.y + selObj.h/2 + 4, m.position.z));
+  }
+
   // размеры выбранного объекта
   const o = sel(), m = o && meshOf(o.id);
   if(m && m.visible){
@@ -928,4 +1010,5 @@ async function boot(){
 }
 boot(); markPlates(); loop();
 window.__dbg = () => ({objects, selId, hist: hist.length, redo: redoStack.length, meshes: raw.children.length,
-  result: !!resultMesh, plate: printPlate(), cam: [+cam.position.x.toFixed(1), +orbit.target.x.toFixed(1)]});
+  result: !!resultMesh, plate: printPlate(),
+  ghost: ghostDepth && {depth:+ghostDepth.size.y.toFixed(2), top:+ghostDepth.top.toFixed(2)}, cam: [+cam.position.x.toFixed(1), +orbit.target.x.toFixed(1)]});
