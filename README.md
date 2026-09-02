@@ -17,6 +17,8 @@ An optional AI agent builds parts for you: it places primitives step by step, ch
 
 Works with DeepSeek, any OpenAI-compatible endpoint (OpenRouter, Groq, Together), local Ollama, or Anthropic.
 
+Everything runs offline: Three.js and the CSG library are vendored into `web/vendor/`, not pulled from a CDN. A tool that prints over your LAN should not need the internet to open its own editor.
+
 ## Requirements
 
 - macOS with [Bambu Studio](https://bambulab.com/en/download/studio) installed — used headless for slicing

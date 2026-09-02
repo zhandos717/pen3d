@@ -4,7 +4,7 @@ PIP  := $(PY) -m pip
 STAMP := $(VENV)/.deps-installed
 
 .DEFAULT_GOAL := help
-.PHONY: help venv run lan check check-slicer check-db examples clean
+.PHONY: help venv run lan check check-slicer check-db examples vendor clean
 
 help:            ## показать этот список
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sort | awk -F':.*## ' '{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -35,6 +35,14 @@ check-slicer: venv  ## слайсер: прогнать тестовый куб 
 
 examples: venv   ## пересобрать примеры в examples/ и проверить их печатаемость
 	$(PY) examples/build.py --write
+
+vendor:          ## перекачать библиотеки в web/vendor по списку .sources
+	@cd web/vendor && while read -r p; do \
+		[ -z "$$p" ] && continue; \
+		mkdir -p "$$(dirname "$$p")"; \
+		curl -sfL "https://cdn.jsdelivr.net/npm/$$p" -o "$$p" || echo "не скачался: $$p"; \
+	done < .sources
+	@echo "файлов в vendor: $$(find web/vendor -name '*.js' | wc -l | tr -d ' ')"
 
 clean:           ## удалить окружение и кэш питона (база pen3d.db остаётся)
 	rm -rf $(VENV) __pycache__ .pytest_cache

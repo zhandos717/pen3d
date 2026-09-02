@@ -17,6 +17,8 @@
 
 Работает с DeepSeek, любым OpenAI-совместимым сервером (OpenRouter, Groq, Together), локальной Ollama или Anthropic.
 
+Всё работает офлайн: Three.js и библиотека булевых операций лежат в `web/vendor/`, а не тянутся с CDN. Редактору, который печатает по локальной сети, незачем зависеть от интернета.
+
 ## Структура
 
 ```
@@ -25,7 +27,8 @@ db.py                  SQLite: сцена, библиотека эскизов, 
 pen3d.db               база (создаётся при первом запуске, в git не хранится)
 web/
   index.html           интерфейс редактора
-  js/                  app, geometry, csg, stl, ai
+  js/                  app, geometry, csg, stl, ai, i18n
+  vendor/              three.js и three-bvh-csg локально (обновить: make vendor)
   icon.svg             иконка
 ```
 

@@ -5,6 +5,7 @@ import { unitGeo } from './geometry.js';
 import { buildResult, holeGhost } from './csg.js';
 import { meshToStl } from './stl.js';
 import { PROMPT, PROVIDERS, sanitize } from './ai.js';
+import { t } from './i18n.js';
 
 const BED = 256;
 const PLATE_GAP = 320;                 // сдвиг стола агента по X
@@ -214,7 +215,7 @@ function restore(s){
   if(!byId(selId)) selId = null;
   sync();
 }
-$('lang').value = localStorage.lang || 'ru';
+$('lang').value = localStorage.lang || 'en';
 $('lang').onchange = e => { localStorage.lang = e.target.value; location.reload(); };
 
 $('undo').onclick = () => { if(!hist.length) return; redoStack.push(snapshot()); restore(hist.pop()); say('отменено'); };
@@ -281,6 +282,8 @@ document.querySelectorAll('[data-add]').forEach(b => b.onclick = () => add(b.dat
 $('del').onclick = () => { const o = sel(); if(!o) return;
   push();
   objects = objects.filter(x => x !== o); selId = null; sync(); say('удалён: ' + o.name); };
+$('hud-hide').onclick = () => { hudOff = true;
+  say('панель скрыта — выбери фигуру заново, чтобы вернуть'); };
 $('hud-dup').onclick = () => $('dup').click();
 $('hud-del').onclick = () => $('del').click();
 
@@ -290,6 +293,7 @@ $('dup').onclick = () => { const o = sel(); if(!o) return;
   objects.push(c); selId = c.id; sync(); say('дубль: ' + c.name); };
 
 function select(id){
+  hudOff = false;
   selId = id;
   const s = sel();
   if(s && s.vis && !showResult && !sketching) gizmo.attach(meshOf(s.id)); else gizmo.detach();
@@ -687,8 +691,10 @@ const saveTokens = () => fetch('/api/tokens', {method:'POST', headers:{'content-
                                                body: JSON.stringify(tok)}).catch(() => {});
 function showTokens(){
   $('tokens').textContent = tok.calls
-    ? `запросов ${tok.calls} · ввод ${tok.in.toLocaleString('ru')} · ответ ${tok.out.toLocaleString('ru')} · всего ${(tok.in+tok.out).toLocaleString('ru')}`
-      + (tok.cached ? ` · из кэша ${tok.cached.toLocaleString('ru')} (дешевле)` : '')
+    ? t('запросов ') + tok.calls + t(' · ввод ') + tok.in.toLocaleString('ru')
+      + t(' · ответ ') + tok.out.toLocaleString('ru')
+      + t(' · всего ') + (tok.in + tok.out).toLocaleString('ru')
+      + (tok.cached ? t(' · из кэша ') + tok.cached.toLocaleString('ru') + t(' (дешевле)') : '')
     : 'пока ничего не потрачено';
 }
 function addTokens(u){
@@ -916,7 +922,7 @@ $('cam').onerror = () => $('cam-hint').textContent = 'камера не отве
 
 // ---------- размеры в сцене ----------
 const labels = $('labels');
-let hudAt = [-1, -1];
+let hudAt = [-1, -1], hudOff = false;
 const pool = [];
 function label(i, text, v, cls){
   let el = pool[i];
@@ -946,17 +952,21 @@ function drawLabels(){
   // мини-панель висит над выбранной фигурой, чтобы не бегать в угол сцены
   const hud = $('hud'), selHud = sel(), mHud = selHud && meshOf(selHud.id);
   // прячем на время перетаскивания: панель прыгала бы за фигурой и мешала целиться
-  if(mHud && mHud.visible && !sketching && !gizmo.dragging){
+  if(mHud && mHud.visible && !sketching && !gizmo.dragging && !hudOff){
     mHud.updateMatrixWorld();
     const b = new THREE.Box3().setFromObject(mHud), c = new THREE.Vector3();
     b.getCenter(c);
     const p = new THREE.Vector3(c.x, b.max.y, c.z).project(cam);
+    const pc = c.clone().project(cam);
     if(p.z < 1){                                  // z > 1 — точка за камерой, координаты переворачиваются
       const W = labels.clientWidth, H = labels.clientHeight;
       const half = (hud.offsetWidth || 150) / 2;
       const x = Math.round(Math.min(W - half - 6, Math.max(half + 6, (p.x*.5 + .5) * W)));
-      // зазор больше высоты стрелки гизмо, иначе панель липнет к фигуре и мешает
-      const y = Math.round(Math.min(H - 8, Math.max(46, (-p.y*.5 + .5) * H - 58)));
+      // гизмо рисуется постоянного экранного размера, поэтому его верх считаем от центра
+      // фигуры в пикселях, а не в миллиметрах: панель должна быть выше всех стрелок
+      const yTop = (-p.y*.5 + .5) * H - 62;
+      const yGizmo = (-pc.y*.5 + .5) * H - 184;
+      const y = Math.round(Math.min(H - 8, Math.max(46, Math.min(yTop, yGizmo))));
       hud.hidden = false;
       if(x !== hudAt[0] || y !== hudAt[1]){       // без этого каждый кадр дёргается раскладка
         hud.style.left = x + 'px'; hud.style.top = y + 'px';

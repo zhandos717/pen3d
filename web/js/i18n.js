@@ -1,4 +1,4 @@
-// Слой локализации поверх готового русского интерфейса: словарь ru→kk,
+// Слой локализации поверх готового русского интерфейса: словари ru→kk и ru→en,
 // одна замена по всем текстовым узлам и наблюдатель за тем, что рисует app.js.
 const KK = {
   // шапка и статус
@@ -125,8 +125,8 @@ const KK = {
   ' · полость закрыта сверху: мостик ':' · қуыс үстінен жабық: көпірше ',
   ' мм провиснет, включи «открыть сверху»':' мм салбырайды, «үстін ашу» дегенді қос',
   'не с чем совмещать — на столе нет тел':'қиыстыратын ештеңе жоқ — үстелде дене жоқ',
-  'по центру «':'ортасында «', 'фигура была не внутри детали — поставил по центру ближайшей «':
-    'фигура бөлшектің ішінде емес еді — ең жақынының ортасына қойдым «',
+  'по центру «':'ортасында «',
+  'фигура была не внутри детали — поставил по центру ближайшей «':'фигура бөлшектің ішінде емес еді — ең жақынының ортасына қойдым «',
   'уже на столе':'әлдеқашан үстелде', 'посажена на стол':'үстелге қондырылды',
   ' мм · стол A1 256×256×256':' мм · A1 үстелі 256×256×256',
   ' · НЕ ВЛЕЗАЕТ':' · СЫЙМАЙДЫ', ' · ниже стола':' · үстелден төмен',
@@ -176,21 +176,338 @@ const KK = {
   ' мм':' мм', 'печать':'басып шығару',
   'перенос старых данных не удался: ':'ескі деректі көшіру сәтсіз: ', 'перенесено в базу: ':'дерекқорға көшірілді: ',
   'база недоступна, работаем без сохранения: ':'дерекқор қолжетімсіз, сақтаусыз жұмыс істейміз: ',
+  // мини-панель над фигурой
+  'двигать':'жылжыту', 'вращать':'айналдыру', 'размер':'өлшем',
+  'дубль':'көшірме', 'скрыть':'жасыру',
+  'Двигать по осям (G)':'Осьтер бойымен жылжыту (G)',
+  'Вращать вокруг осей (R)':'Осьтерді айналдыру (R)',
+  'Менять размер (S)':'Өлшемін өзгерту (S)',
+  'Создать копию фигуры (⌘D)':'Фигураның көшірмесін жасау (⌘D)',
+  'Удалить фигуру (Delete)':'Фигураны жою (Delete)',
+  'Скрыть панель — вернётся при новом выделении':'Панельді жасыру — келесі таңдауда қайтады',
+  'Привязка: шаг 1 мм и 15°':'Байлау: қадам 1 мм және 15°',
+  // мини-панель над фигурой
+  // деталь и полость
+  'Центрировать':'Ортаға қою', 'На стол':'Үстелге', 'стенка, мм':'қабырға, мм',
+  'открыть сверху':'үстін ашу',
+  'совместить с центром детали':'бөлшектің ортасымен беттестіру',
+  'опустить деталь на стол':'бөлшекті үстелге түсіру',
+  'разорвать связь с группой':'топпен байланысты үзу',
+  'панель скрыта — выбери фигуру заново, чтобы вернуть':'панель жасырылды — қайтару үшін фигураны қайта таңда',
+  // добавлено пакетом: остальной интерфейс
+  '▭ Короб':'▭ Қорап',
+  '● Цилиндр':'● Цилиндр',
+  '⬡ Призма':'⬡ Призма',
+  '◍ Шар':'◍ Шар',
+  '▲ Конус':'▲ Конус',
+  '◎ Кольцо':'◎ Сақина',
+  '◺ Клин':'◺ Сына',
+  '⌁ Резьба':'⌁ Бұранда',
+  '✎ Нарисовать эскиз':'✎ Эскиз салу',
+  'имя':'аты',
+  'цвет':'түсі',
+  'отверстие':'тесік',
+  'видимый':'көрінеді',
+  'граней':'қырлары',
+  'Ø резьбы':'Ø бұранда',
+  'шаг, мм':'қадам, мм',
+  'низ':'төмені',
+  'заполнение, %':'толтыру, %',
+  'узор':'өрнек',
+  'стенок':'қабырға саны',
+  'поддержки':'тіректер',
+  'печатать':'басып шығару',
+  'агент с проверкой':'тексеретін агент',
+  'шагов не больше':'қадам саны шегі',
+  'модель':'модель',
+  'адрес':'мекенжай',
+  'перенести деталь агента на свой стол':'агент бөлшегін өз үстеліңе көшіру',
+  'удалить всё со стола агента':'агент үстеліндегінің бәрін жою',
+  'Наклон:':'Еңкею:',
+  'Русский':'Орысша',
+  'Қазақша':'Қазақша',
+  'выбрать / вращать вид ·':'таңдау / көріністі бұру ·',
+  'двигать вид · колесо — зум':'көріністі жылжыту · дөңгелек — масштаб',
+  '— виды ·':'— көріністер ·',
+  '— двигать / вращать / размер':'— жылжыту / бұру / өлшем',
+  '— дубль':'— көшірме',
+  '— отмена / повтор ·':'— болдырмау / қайталау ·',
+  '— снять выделение':'— таңдауды алып тастау',
+  'и тяни за красное/синее кольцо, либо поля ↕X / ↕Z':'қызыл/көк сақинадан тарт немесе ↕X / ↕Z өрістері',
+  'Автосохранение в базу включено. База —':'Дерекқорға автосақтау қосулы. Дерекқор —',
+  'рядом с сервером.':'сервердің қасында.',
+  'с IP, access code и serial принтера.':'принтердің IP, access code және сериясымен.',
+  'подставка под телефон\nкоробочка с крышкой\nкрючок для наушников':'телефон тірегі\nқақпақты қорапша\nқұлаққап ілгегі',
+  'запросов ':'сұраныс ',
+  ' · ввод ':' · кіріс ',
+  ' · ответ ':' · жауап ',
+  ' · всего ':' · барлығы ',
+  ' (дешевле)':' (арзанырақ)',
+  'пока ничего не потрачено':'әзірге ештеңе жұмсалмады',
+  'Пластик экономит заполнение, а не ручные пустоты: 10-15% хватает для корпусов, «молния» — минимум материала, гироид — прочнее при том же проценте. Поддержки строит слайсер (tree, порог 30°). Нужен':'Пластикті толтыру үнемдейді, қолмен жасалған қуыстар емес: корпустарға 10-15% жетеді, «найзағай» — ең аз материал, гироид — сол пайызда берігірек. Тіректерді слайсер салады (tree, шегі 30°). Қажет',
+  'X — вправо, Y — вглубь стола, «низ» — высота над столом. Центр стола 0,0. После наклона деталь может уйти под стол — посади её обратно. Полость снизу: фигура с «отверстие», низ = −1, высота = глубина кармана + 1. Цвет — только для наглядности в редакторе: STL цвета не хранит, печатается тем филаментом, что заряжен.':'X — оңға, Y — үстел тереңіне, «төмені» — үстелден биіктік. Үстел ортасы 0,0. Еңкейткеннен кейін бөлшек үстел астына кетуі мүмкін — оны қайта қондыр. Астыңғы қуыс: «тесік» белгісі бар фигура, төмені = −1, биіктігі = қалта тереңдігі + 1. Түс — тек редакторда көрнекілік үшін: STL түсті сақтамайды, тиелген филаментпен басылады.',
+  'Ключ берётся из ~/.pen3d.json (deepseek_key), либо впиши свой.':'Кілт ~/.pen3d.json ішінен алынады (deepseek_key), немесе өзіңдікін жаз.',
 };
 
-export const lang = localStorage.lang || 'ru';
+const EN = {
+  'Дубль':'Duplicate', 'Удалить':'Delete', 'Результат':'Result',
+  'добавь фигуру или нарисуй эскиз':'add a shape or draw a sketch',
+  'Объекты':'Objects',
+  'пусто — добавь короб или нарисуй эскиз':'empty — add a box or draw a sketch',
+  'выбери объект в списке или кликни по нему в сцене':'pick an object in the list or click it in the scene',
+  'Проект':'Project', 'Сохранить файл':'Save file', 'Открыть':'Open', 'Новый проект':'New project',
+  'Автосохранение в базу включено. База — ':'Autosave to the database is on. Database — ',
+  ' рядом с сервером.':' next to the server.',
+  'Принтер':'Printer', 'подключаюсь…':'connecting…',
+  'Показать камеру':'Show camera', 'Скрыть камеру':'Hide camera',
+  'камера принтера':'printer camera',
+  'поток идёт с принтера напрямую, ~1 кадр в 2 секунды':'stream comes straight off the printer, ~1 frame per 2 seconds',
+  'подключаюсь к камере…':'connecting to the camera…',
+  'поток с принтера, ~1 кадр в 2 секунды':'stream off the printer, ~1 frame per 2 seconds',
+  'камера не отвечает — принтер спит или занят':'camera is not responding — the printer is asleep or busy',
+  'сервер не отвечает':'server is not responding', 'принтер не отвечает':'printer is not responding',
+  'нет связи':'no connection', 'сопло':'nozzle', 'стол':'bed',
+  'слой ':'layer ', ' из ':' of ', ' ч ':' h ', ' мин':' min',
+  'филамент':'filament', 'ошибка принтера: ':'printer error: ', 'данные ':'data ', ' с назад':'s old',
+  'простаивает':'idle', 'печатает':'printing', 'на паузе':'paused',
+  'печать закончена':'print finished', 'сбой печати':'print failed',
+  'готовится':'preparing', 'слайсит':'slicing',
+  'Печать':'Print', 'печатать ':'print ',
+  'мой стол':'my plate', 'стол агента':'agent plate',
+  'МОЙ СТОЛ · в печать':'MY PLATE · to print', 'СТОЛ АГЕНТА · в печать':'AGENT PLATE · to print',
+  'Скачать STL':'Download STL', 'Залить на A1':'Upload to A1', 'Печатать сейчас':'Print now',
+  'поддержки ':'supports ', 'заполнение, % ':'infill, % ', 'узор ':'pattern ', 'стенок ':'walls ',
+  'гироид':'gyroid', 'сетка':'grid', 'соты':'honeycomb', 'молния':'lightning',
+  'Пластик экономит заполнение, а не ручные пустоты: 10-15% хватает для корпусов,':
+    'Infill saves plastic, hand-made cavities do not: 10-15% is enough for enclosures,',
+  '«молния» — минимум материала, гироид — прочнее при том же проценте.':
+    '"lightning" uses the least material, gyroid is stronger at the same percentage.',
+  'Поддержки строит слайсер (tree, порог 30°). Нужен ':'Supports are built by the slicer (tree, 30° threshold). You need ',
+  ' с IP, access code и serial принтера.':' with the printer IP, access code and serial.',
+  'Двигать (G)':'Move (G)', 'Вращать (R)':'Rotate (R)', 'Размер (S)':'Scale (S)',
+  'Привязка 1 мм / 15°':'Snap 1 mm / 15°',
+  'Сверху':'Top', 'Спереди':'Front', 'Сбоку':'Side',
+  'Добавить':'Add', 'Короб':'Box', 'Цилиндр':'Cylinder', 'Призма':'Prism', 'Шар':'Sphere',
+  'Конус':'Cone', 'Кольцо':'Torus', 'Клин':'Wedge', 'Резьба':'Thread', 'Эскиз':'Sketch',
+  'Нарисовать эскиз':'Draw a sketch',
+  'Свойства':'Properties', 'Эскизы':'Sketches',
+  'имя ':'name ', 'цвет ':'color ', 'отверстие ':'hole ', 'видимый ':'visible ',
+  'Размер, мм':'Size, mm', 'Положение, мм':'Position, mm', 'низ ':'bottom ',
+  'Ш':'W', 'Г':'D', 'В':'H',
+  'поворот вокруг вертикали':'rotation around the vertical axis', 'наклон вокруг X':'tilt around X',
+  'наклон вокруг Z':'tilt around Z',
+  'выровнять':'align', 'наклон X к 90°':'tilt X to 90°', 'поворот Y к 90°':'rotation Y to 90°',
+  'наклон Z к 90°':'tilt Z to 90°',
+  'граней ':'sides ', 'стенка, мм ':'wall, mm ', 'открыть сверху ':'open top ',
+  'Ø резьбы ':'thread Ø ', 'шаг, мм ':'pitch, mm ',
+  'Центрировать в детали':'Center in the part', 'Посадить на стол':'Drop onto the plate',
+  'Разгруппировать':'Ungroup', 'Утопить снизу':'Sink below',
+  'опустить отверстие на 1 мм ниже дна':'drop the hole 1 mm below the bottom',
+  'X — вправо, Y — вглубь стола, «низ» — высота над столом. Центр стола 0,0.':
+    'X is right, Y is into the plate, "bottom" is height above the plate. Plate center is 0,0.',
+  'После наклона деталь может уйти под стол — посади её обратно.':
+    'After a tilt the part may sink below the plate — drop it back on.',
+  'Полость снизу: фигура с «отверстие», низ = −1, высота = глубина кармана + 1.':
+    'Cavity from below: a shape marked "hole", bottom = −1, height = pocket depth + 1.',
+  'Цвет — только для наглядности в редакторе: STL цвета не хранит, печатается тем филаментом, что заряжен.':
+    'Color is editor-only: STL stores no color, the part prints in whatever filament is loaded.',
+  'Управление':'Controls',
+  ' выбрать / вращать вид · ':' select / orbit · ', ' двигать вид · колесо — зум':' pan · wheel to zoom',
+  ' — двигать / вращать / размер':' — move / rotate / scale',
+  ' — виды · ':' — views · ', ' — снять выделение':' — deselect',
+  ' — отмена / повтор · ':' — undo / redo · ', ' — дубль':' — duplicate',
+  'Эскиз: рисуй на столе, отпустил — фигура готова':'Sketch: draw on the plate, release and the shape is done',
+  'Резьбу масштабировать нельзя — меняй Ø и шаг в свойствах':'Threads cannot be scaled — change Ø and pitch in properties',
+  'Наклон: ':'Tilt: ', ' и тяни за красное/синее кольцо, либо поля ↕X / ↕Z':' and drag the red/blue ring, or use the ↕X / ↕Z fields',
+  'ЛКМ':'LMB', 'ПКМ':'RMB',
+  'Генерация':'Generation', 'Сгенерировать':'Generate',
+  'подставка под телефон\nкоробочка с крышкой\nкрючок для наушников':
+    'phone stand\nsmall box with a lid\nheadphone hook',
+  'агент с проверкой ':'agent with checks ', 'шагов не больше ':'max steps ',
+  'Остановить агента':'Stop the agent', 'Забрать к себе':'Take it over', 'Очистить стол агента':'Clear the agent plate',
+  'Добавляет фигуры к текущему проекту, ничего не удаляя. Текст запроса сохраняется.':
+    'Adds shapes to the current project without deleting anything. The prompt text is kept.',
+  'Токены':'Tokens', 'Сбросить счётчик':'Reset the counter',
+  'История запросов':'Request history', 'Обновить':'Refresh', 'пока пусто':'nothing yet',
+  'лог недоступен':'log unavailable', 'Модель':'Model',
+  'DeepSeek — через сервер':'DeepSeek — via the server',
+  'OpenAI-совместимый — через сервер':'OpenAI-compatible — via the server',
+  'Ollama локально — через сервер':'Ollama locally — via the server',
+  'Anthropic — прямо из браузера':'Anthropic — straight from the browser',
+  'модель ':'model ', 'адрес ':'base URL ', 'Проверить связь':'Test the connection',
+  'API-ключ (пусто — берётся из ~/.pen3d.json)':'API key (empty — taken from ~/.pen3d.json)',
+  'API-ключ (пусто — из ~/.pen3d.json)':'API key (empty — from ~/.pen3d.json)',
+  'sk-ant-… (обязателен)':'sk-ant-… (required)', 'не нужен':'not needed',
+  'Библиотека эскизов':'Sketch library', 'Сохранить выбранный эскиз':'Save the selected sketch',
+  'Пусто. Нарисуй эскиз (✎), выбери его и нажми «Сохранить».':'Empty. Draw a sketch (✎), select it and press "Save".',
+  'Экспорт':'Export', 'Импорт':'Import',
+  'Клик по карточке ставит контур на стол. Эскизы хранятся в браузере отдельно от проекта.':
+    'Clicking a card puts the outline on the plate. Sketches live in the browser, separate from the project.',
+  'контур эскиза не строится, заменён коробом':'sketch outline could not be built, replaced with a box',
+  'не удалось собрать: ':'could not assemble: ',
+  'показан результат — отверстия вычтены':'showing the result — holes subtracted',
+  'редактирование':'editing', 'битый файл проекта':'corrupted project file',
+  'отменено':'undone', 'повторено':'redone',
+  'сцена не сохранилась — сервер не отвечает':'scene was not saved — the server is not responding',
+  'проект сохранён':'project saved', 'проект открыт: ':'project opened: ', 'не открылся: ':'could not open: ',
+  'новый проект':'new project',
+  'добавлен: ':'added: ', 'удалён: ':'deleted: ', 'дубль: ':'duplicate: ', ' копия':' copy',
+  'отверстие / тело':'hole / body', 'видимость':'visibility',
+  'теперь отверстие':'now a hole', 'теперь тело':'now a body',
+  'стенка тоньше 0.8 мм — печатать нечем, поднял до 0.8':'wall thinner than 0.8 mm cannot be printed, raised to 0.8',
+  'стенка не может быть толще ':'wall cannot be thicker than ', ' мм для этой детали':' mm for this part',
+  'выбери фигуру':'select a shape', 'уже выровнено':'already aligned',
+  'это тело, а не отверстие — включи «отверстие»':'this is a body, not a hole — tick "hole"',
+  'отверстие утоплено на 1 мм ниже стола':'hole sunk 1 mm below the plate',
+  ' · полость закрыта сверху: мостик ':' · cavity closed on top: a ',
+  ' мм провиснет, включи «открыть сверху»':' mm bridge will sag, tick "open top"',
+  'не с чем совмещать — на столе нет тел':'nothing to align with — no bodies on the plate',
+  'по центру «':'centered in "',
+  'фигура была не внутри детали — поставил по центру ближайшей «':'the shape was outside the part — centered it in the nearest "',
+  'уже на столе':'already on the plate', 'посажена на стол':'dropped onto the plate',
+  ' мм · стол A1 256×256×256':' mm · A1 plate 256×256×256',
+  ' · НЕ ВЛЕЗАЕТ':' · DOES NOT FIT', ' · ниже стола':' · below the plate',
+  'рисуй контур на столе, отпусти — получится фигура':'draw the outline on the plate, release and you get a shape',
+  'стол агента пуст':'the agent plate is empty', 'твой стол пуст':'your plate is empty',
+  'нет ни одного тела':'no bodies at all', 'STL сохранён':'STL saved',
+  'слайсим…':'slicing…', 'слайсим в Bambu Studio, ~20 сек':'slicing in Bambu Studio, ~20 s',
+  'печать запущена: ':'print started: ', 'залито на принтер: ':'uploaded to the printer: ',
+  ' · с поддержками':' · with supports', ' · заполнение ':' · infill ',
+  ' — проверь ~/.pen3d.json и LAN Only Mode':' — check ~/.pen3d.json and LAN Only Mode',
+  'нужен Anthropic API-ключ':'an Anthropic API key is required', 'проверяем…':'testing…',
+  ' отвечает: ':' replies: ', 'модель недоступна: ':'model unavailable: ',
+  ' тел':' bodies', 'запрос подставлен':'prompt filled in',
+  'запросов ':'requests ', ' · ввод ':' · input ', ' · ответ ':' · output ', ' · всего ':' · total ',
+  ' · из кэша ':' · from cache ', ' (дешевле)':' (cheaper)',
+  'пока ничего не потрачено':'nothing spent yet', 'счётчик сброшен':'counter reset',
+  'печатаем стол агента':'printing the agent plate', 'печатаем твой стол':'printing your plate',
+  'останавливаем агента — доработает текущий шаг':'stopping the agent — it will finish the current step',
+  'сервер не отдал поток: ':'server did not return a stream: ', 'поток оборвался':'the stream broke off',
+  'у агента пусто':'the agent has nothing', 'забрано со стола агента: ':'taken from the agent plate: ',
+  ' · двигаются вместе, «Разгруппировать» разрывает связь':' · they move together, "Ungroup" breaks the link',
+  'фигура и так сама по себе':'the shape is already on its own',
+  'группа из ':'a group of ', ' тел разорвана':' bodies was broken up',
+  'стол агента очищен':'agent plate cleared', 'опиши деталь':'describe the part',
+  'думает…':'thinking…', 'агент думает… шаг ':'agent is thinking… step ',
+  'ставит':'is placing', 'правит':'is editing', 'убирает':'is removing',
+  'смотрит сцену':'is looking at the scene', 'проверяет':'is checking', 'заканчивает':'is finishing',
+  'агент ':'agent ',
+  'деталь готова · тел ':'part is done · bodies ', ' · по шаблону, без запроса к модели':' · from a template, no model call',
+  ' · шагов ':' · steps ', 'остановлено тобой · тел ':'stopped by you · bodies ',
+  ', шагов ':', steps ', ' — деталь не доделана':' — the part is unfinished',
+  'кончились шаги (':'out of steps (', ') · тел ':') · bodies ',
+  ' — деталь может быть не доделана,':' — the part may be unfinished,',
+  ' подними лимит и повтори':' raise the limit and try again',
+  'агент закончил, но деталь с браком · тел ':'agent finished, but the part has defects · bodies ',
+  'готово · шагов ':'done · steps ',
+  'модель вернула не JSON: ':'the model returned non-JSON: ',
+  'добавлено фигур: ':'shapes added: ', ' · выброшены отверстия крупнее детали: ':' · dropped holes bigger than the part: ',
+  'сервер не принял эскиз':'the server rejected the sketch', 'удалить':'delete',
+  'поставлен эскиз: ':'sketch placed: ', 'эскиз удалён':'sketch deleted',
+  'выбери эскиз на сцене или в списке объектов':'select a sketch in the scene or in the object list',
+  'Имя эскиза:':'Sketch name:', 'эскиз сохранён: ':'sketch saved: ',
+  'библиотека выгружена':'library exported', 'это не библиотека эскизов':'this is not a sketch library',
+  'добавлено эскизов: ':'sketches added: ', 'импорт не удался: ':'import failed: ',
+  'Очистить проект?':'Clear the project?', 'Запустить печать на A1 прямо сейчас?':'Start printing on the A1 right now?',
+  'в детали ':'inside ', 'снаружи ':'outside ', 'не задевает деталь':'does not touch the part',
+  ' мм':' mm', 'печать':'print',
+  'перенос старых данных не удался: ':'migrating old data failed: ', 'перенесено в базу: ':'migrated to the database: ',
+  'база недоступна, работаем без сохранения: ':'database unavailable, working without saving: ',
+  // мини-панель над фигурой
+  'двигать':'move', 'вращать':'rotate', 'размер':'size',
+  'дубль':'copy', 'скрыть':'hide',
+  'Двигать по осям (G)':'Move along axes (G)',
+  'Вращать вокруг осей (R)':'Rotate around axes (R)',
+  'Менять размер (S)':'Resize (S)',
+  'Создать копию фигуры (⌘D)':'Duplicate shape (⌘D)',
+  'Удалить фигуру (Delete)':'Delete shape (Delete)',
+  'Скрыть панель — вернётся при новом выделении':'Hide panel — comes back on next selection',
+  'Привязка: шаг 1 мм и 15°':'Snap: 1 mm and 15° steps',
+  // мини-панель над фигурой
+  // деталь и полость
+  'Центрировать':'Center', 'На стол':'Drop', 'стенка, мм':'wall, mm',
+  'открыть сверху':'open top',
+  'совместить с центром детали':'align with the centre of the part',
+  'опустить деталь на стол':'drop the part onto the plate',
+  'разорвать связь с группой':'break the group link',
+  'панель скрыта — выбери фигуру заново, чтобы вернуть':'panel hidden — select the shape again to bring it back',
+  // добавлено пакетом: остальной интерфейс
+  '▭ Короб':'▭ Box',
+  '● Цилиндр':'● Cylinder',
+  '⬡ Призма':'⬡ Prism',
+  '◍ Шар':'◍ Sphere',
+  '▲ Конус':'▲ Cone',
+  '◎ Кольцо':'◎ Torus',
+  '◺ Клин':'◺ Wedge',
+  '⌁ Резьба':'⌁ Thread',
+  '✎ Нарисовать эскиз':'✎ Draw a sketch',
+  'имя':'name',
+  'цвет':'color',
+  'отверстие':'hole',
+  'видимый':'visible',
+  'граней':'sides',
+  'Ø резьбы':'Ø thread',
+  'шаг, мм':'pitch, mm',
+  'низ':'bottom',
+  'заполнение, %':'infill, %',
+  'узор':'pattern',
+  'стенок':'walls',
+  'поддержки':'supports',
+  'печатать':'print',
+  'агент с проверкой':'agent with checks',
+  'шагов не больше':'step limit',
+  'модель':'model',
+  'адрес':'endpoint',
+  'перенести деталь агента на свой стол':'move the agent part to your plate',
+  'удалить всё со стола агента':'clear the agent plate',
+  'Наклон:':'Tilt:',
+  'Русский':'Russian',
+  'Қазақша':'Kazakh',
+  'выбрать / вращать вид ·':'select / orbit ·',
+  'двигать вид · колесо — зум':'pan · wheel to zoom',
+  '— виды ·':'— views ·',
+  '— двигать / вращать / размер':'— move / rotate / scale',
+  '— дубль':'— duplicate',
+  '— отмена / повтор ·':'— undo / redo ·',
+  '— снять выделение':'— clear selection',
+  'и тяни за красное/синее кольцо, либо поля ↕X / ↕Z':'and drag the red/blue ring, or use the ↕X / ↕Z fields',
+  'Автосохранение в базу включено. База —':'Autosave to the database is on. The database is',
+  'рядом с сервером.':'next to the server.',
+  'с IP, access code и serial принтера.':'with the printer IP, access code and serial.',
+  'подставка под телефон\nкоробочка с крышкой\nкрючок для наушников':'phone stand\nsmall box with a lid\nheadphone hook',
+  'запросов ':'requests ',
+  ' · ввод ':' · in ',
+  ' · ответ ':' · out ',
+  ' · всего ':' · total ',
+  ' (дешевле)':' (cheaper)',
+  'пока ничего не потрачено':'nothing spent yet',
+  'Пластик экономит заполнение, а не ручные пустоты: 10-15% хватает для корпусов, «молния» — минимум материала, гироид — прочнее при том же проценте. Поддержки строит слайсер (tree, порог 30°). Нужен':'Infill saves plastic, hand-made cavities do not: 10-15% is enough for enclosures, "lightning" uses the least material, gyroid is stronger at the same percentage. Supports are built by the slicer (tree, 30° threshold). You need',
+  'X — вправо, Y — вглубь стола, «низ» — высота над столом. Центр стола 0,0. После наклона деталь может уйти под стол — посади её обратно. Полость снизу: фигура с «отверстие», низ = −1, высота = глубина кармана + 1. Цвет — только для наглядности в редакторе: STL цвета не хранит, печатается тем филаментом, что заряжен.':'X is right, Y is into the plate, "bottom" is height above the plate. Plate centre is 0,0. After a tilt the part may sink below the plate — drop it back on. Cavity from below: a shape marked "hole", bottom = −1, height = pocket depth + 1. Color is editor-only: STL stores no color, the part prints in whatever filament is loaded.',
+  'Ключ берётся из ~/.pen3d.json (deepseek_key), либо впиши свой.':'The key comes from ~/.pen3d.json (deepseek_key), or type your own.',
+};
 
-let re = null, keys = null;
-if(lang === 'kk'){
-  keys = Object.keys(KK).filter(k => k.length > 2).sort((a, b) => b.length - a.length);
-  re = new RegExp(keys.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g');
-}
+export const lang = localStorage.lang || 'en';
+const D = {kk: KK, en: EN}[lang];
+
+// Переводим только строку целиком либо её неизменный префикс вида «добавлен: ».
+// Замена по любой подстроке давала смесь языков: «Удалить фигуру (Delete)»
+// ловила ключ «Удалить» и превращалась в «Delete фигуру (Delete)».
+const PREFIXES = D ? Object.keys(D).filter(k => k.endsWith(': ')).sort((a, b) => b.length - a.length) : [];
+
+// Многострочные подсказки приходят из разметки с переносами и отступами,
+// поэтому ключи ищем ещё и по «сжатым» пробелам.
+const FLAT = D ? Object.fromEntries(Object.entries(D)
+  .map(([k, v]) => [k.replace(/\s+/g, ' ').trim(), v])) : {};
 
 export function t(s){
-  if(lang === 'ru' || typeof s !== 'string' || !s) return s;
-  const exact = KK[s.trim()];
-  if(exact !== undefined) return s.replace(s.trim(), exact);
-  return s.replace(re, m => KK[m]);
+  if(!D || typeof s !== 'string' || !s.trim()) return s;
+  const raw = s.trim();
+  const exact = D[raw] ?? FLAT[raw.replace(/\s+/g, ' ')];
+  if(exact !== undefined) return s.replace(raw, exact);
+  for(const p of PREFIXES){
+    if(raw.startsWith(p)) return s.replace(raw, D[p] + raw.slice(p.length));
+  }
+  return s;                                  // нет в словаре — оставляем как есть
 }
 
 const SKIP_TEXT = new Set(['SCRIPT', 'STYLE', 'TEXTAREA']);
@@ -214,11 +531,11 @@ function walk(node){
 }
 
 export function translate(root){
-  if(lang === 'ru') return;
+  if(!D) return;
   busy = true; walk(root); busy = false;
 }
 
-if(lang !== 'ru'){
+if(D){
   const c = window.confirm, pr = window.prompt;
   window.confirm = m => c(t(m));
   window.prompt = (m, d) => pr(t(m), d);
