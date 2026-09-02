@@ -132,6 +132,11 @@ code{font:11px ui-monospace,monospace;color:var(--dim)}
 .pr-row b{color:var(--ink);font-weight:600}
 .pr .dot{width:8px;height:8px;border-radius:50%;background:#555c68;flex:none}
 .pr.on .dot{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+button.busy{position:relative;overflow:hidden;color:var(--dim)}
+button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:40%;
+  background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:.25;
+  animation:sweep 1.1s linear infinite}
+@keyframes sweep{to{left:120%}}
 #cam-box{margin-top:6px}
 #hist-box{margin-top:6px;max-height:190px;overflow:auto;border:1px solid var(--line);border-radius:6px}
 #hist-box .v{display:flex;justify-content:space-between;gap:6px;padding:4px 7px;cursor:pointer;font-size:11px;color:var(--dim)}

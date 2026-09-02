@@ -595,7 +595,7 @@ function stlText(){
 $('estimate').onclick = async e => {
   const out = stlText(); if(!out) return;
   const btn = e.currentTarget, box = $('est');
-  btn.disabled = true; btn.textContent = t('считаем…'); say(t('слайсим, чтобы посчитать расход'));
+  const done = busy(btn, t('считаем…')); say(t('слайсим, чтобы посчитать расход'));
   try{
     const r = await fetch('/estimate', {method:'POST', body: out, headers:{
       'x-support': $('sup').checked ? '1' : '0', 'x-infill': $('infill').value,
@@ -611,7 +611,7 @@ $('estimate').onclick = async e => {
       + `<br><span style="color:#5c626e">${j.material} · ${j.density} ${t('г/см³')} · Ø${j.diameter} ${t('мм пруток')}</span>`;
     say(`${j.grams} ${t('г')} · ${h}${t('ч')} ${m}${t('мин')}`, 'ok');
   }catch(err){ say(t('не удалось посчитать: ') + err.message, 'err'); }
-  btn.disabled = false; btn.textContent = t('Сколько уйдёт пластика');
+  done();
 };
 
 $('stl').onclick = () => { const out = stlText(); if(!out) return;
@@ -621,7 +621,7 @@ $('stl').onclick = () => { const out = stlText(); if(!out) return;
 async function toPrinter(path, btn, label){
   const out = stlText(); if(!out) return;
   if(path === '/print' && !confirm('Запустить печать на A1 прямо сейчас?')) return;
-  btn.disabled = true; btn.textContent = 'слайсим…'; say('слайсим в Bambu Studio, ~20 сек');
+  const done = busy(btn, t('слайсим…')); say('слайсим в Bambu Studio, ~20 сек');
   try{
     const r = await fetch(path, {method:'POST', body: out, headers:{
       'x-support': $('sup').checked ? '1' : '0',
@@ -631,7 +631,7 @@ async function toPrinter(path, btn, label){
     say((j.printing ? 'печать запущена: ' : 'залито на принтер: ') + j.file
         + (j.support ? ' · с поддержками' : '') + ` · заполнение ${j.infill}%`, 'ok');
   }catch(e){ say(e.message.split('\n')[0] + ' — проверь ~/.pen3d.json и LAN Only Mode', 'err'); }
-  btn.disabled = false; btn.textContent = label;
+  done();
 }
 $('send').onclick = e => toPrinter('/upload', e.currentTarget, 'Залить на A1');
 $('print').onclick = e => toPrinter('/print', e.currentTarget, 'Печатать сейчас');
@@ -841,7 +841,7 @@ $('wipe-agent').onclick = () => {
 $('gen').onclick = async e => {
   const btn = e.currentTarget, task = $('ai').value.trim();
   if(!task) return say('опиши деталь', 'err');
-  btn.disabled = true; btn.textContent = 'думает…'; say(`${model.value} думает…`);
+  const done = busy(btn, t('думает…')); say(`${model.value} ${t('думает…')}`);
   try{
     if($('agent').checked && prov.value !== 'anthropic'){
       agentBusy = true; $('stop').disabled = false; focusPlate(PLATE_GAP);
@@ -881,7 +881,7 @@ $('gen').onclick = async e => {
       };
       const [text, kind] = REASON[j.reason] || [`готово · шагов ${steps}`, 'ok'];
       say(text + (j.problems.length ? ` · ${j.problems[0]}` : ''), j.problems.length ? 'err' : kind);
-      btn.disabled = false; btn.textContent = 'Сгенерировать';
+      done();
       return;
     }
     const text = await askAi(PROMPT + task);
@@ -897,7 +897,7 @@ $('gen').onclick = async e => {
         (dropped.length ? ` · выброшены отверстия крупнее детали: ${dropped.join(', ')}` : ''),
         dropped.length ? 'err' : 'ok');
   }catch(err){ say('AI: ' + err.message, 'err'); loadLog(); }
-  btn.disabled = false; btn.textContent = 'Сгенерировать';
+  done();
 };
 
 // ---------- библиотека эскизов ----------
@@ -965,6 +965,18 @@ $('libfile').onchange = async e => {
   }catch(err){ say('импорт не удался: ' + err.message, 'err'); }
   e.target.value = '';
 };
+
+// Долгие операции (запрос к модели, слайсинг) шли со статичной подписью на кнопке,
+// и через полминуты это выглядело как зависание. Здесь кнопка пульсирует и считает секунды.
+function busy(btn, label){
+  const was = btn.textContent;
+  const t0 = Date.now();
+  btn.disabled = true; btn.classList.add('busy');
+  const tick = () => btn.textContent = `${label} ${Math.round((Date.now() - t0) / 1000)} с`;
+  tick();
+  const id = setInterval(tick, 1000);
+  return () => { clearInterval(id); btn.classList.remove('busy'); btn.disabled = false; btn.textContent = was; };
+}
 
 // ---------- история версий ----------
 // Снимок пишется сервером не чаще раза в пять минут и только при изменениях,
