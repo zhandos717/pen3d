@@ -823,6 +823,22 @@ $('libfile').onchange = async e => {
   e.target.value = '';
 };
 
+// ---------- камера ----------
+// Поток открывается только по кнопке: пока img без src, принтер его не отдаёт.
+$('cam-toggle').onclick = () => {
+  const box = $('cam-box'), img = $('cam'), on = box.hidden;
+  box.hidden = !on;
+  $('cam-toggle').textContent = on ? 'Скрыть камеру' : 'Показать камеру';
+  if(on){
+    $('cam-hint').textContent = 'подключаюсь к камере…';
+    img.src = '/camera?' + Date.now();
+  }else{
+    img.removeAttribute('src');   // иначе браузер продолжит тянуть поток в фоне
+  }
+};
+$('cam').onload = () => $('cam-hint').textContent = 'поток с принтера, ~1 кадр в 2 секунды';
+$('cam').onerror = () => $('cam-hint').textContent = 'камера не отвечает — принтер спит или занят';
+
 // ---------- размеры в сцене ----------
 const labels = $('labels');
 const pool = [];

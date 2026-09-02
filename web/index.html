@@ -116,6 +116,8 @@ code{font:11px ui-monospace,monospace;color:var(--dim)}
 .pr-row b{color:var(--ink);font-weight:600}
 .pr .dot{width:8px;height:8px;border-radius:50%;background:#555c68;flex:none}
 .pr.on .dot{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+#cam-box{margin-top:6px}
+#cam{width:100%;border-radius:6px;border:1px solid var(--line);display:block;background:#000;min-height:90px}
 .pr.busy .dot{background:#f0b429;box-shadow:0 0 8px #f0b429}
 .pr.err .dot{background:var(--danger);box-shadow:0 0 8px var(--danger)}
 .pr .bar{height:5px;border-radius:3px;background:#22262e;overflow:hidden;margin:5px 0 2px}
@@ -162,6 +164,11 @@ code{font:11px ui-monospace,monospace;color:var(--dim)}
       <h2>Принтер</h2>
       <div id="printer" class="pr">
         <div class="pr-row"><span class="dot"></span><b id="pr-state">подключаюсь…</b></div>
+      </div>
+      <button class="sm" id="cam-toggle" style="margin-top:6px;width:100%">Показать камеру</button>
+      <div id="cam-box" hidden>
+        <img id="cam" alt="камера принтера">
+        <div class="hint" id="cam-hint">поток идёт с принтера напрямую, ~1 кадр в 2 секунды</div>
       </div>
     </div>
 

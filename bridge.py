@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Мост браузер -> Bambu Lab A1 в LAN Mode: STL -> слайс -> FTPS -> MQTT print."""
-import ftplib, json, os, re, socket, ssl, subprocess, sys, tempfile, time, uuid
+import ftplib, itertools, json, os, re, socket, ssl, struct, subprocess, sys, tempfile, time, uuid
 
 import db
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -487,6 +487,37 @@ def printer_watch():
     PRINTER['client'] = cl
 
 
+# ---------- камера ----------
+# A1 не отдаёт RTSP (он только у X1): на порту 6000 свой протокол — 80 байт авторизации,
+# дальше подряд идут JPEG-кадры, каждый с 16-байтным заголовком, где первые 4 байта — размер.
+CAM_PORT = 6000
+
+
+def recv_exact(sock, n):
+    buf = b''
+    while len(buf) < n:
+        chunk = sock.recv(min(65536, n - len(buf)))
+        if not chunk:
+            raise ConnectionError('принтер закрыл поток камеры')
+        buf += chunk
+    return buf
+
+
+def camera_frames(ip, code):
+    """Отдаёт кадры по одному, пока жив сокет."""
+    auth = (struct.pack('<IIII', 0x40, 0x3000, 0, 0)
+            + b'bblp'.ljust(32, b'\x00') + code.encode().ljust(32, b'\x00'))
+    ctx = ssl._create_unverified_context()
+    raw = socket.create_connection((ip, CAM_PORT), timeout=15)
+    with ctx.wrap_socket(raw, server_hostname=ip) as s:
+        s.sendall(auth)
+        while True:
+            size = struct.unpack('<I', recv_exact(s, 16)[:4])[0]
+            if not 0 < size < 20_000_000:
+                raise ConnectionError(f'подозрительный размер кадра: {size}')
+            yield recv_exact(s, size)
+
+
 def printer_status():
     printer_watch()
     st = PRINTER['state']
@@ -553,6 +584,8 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, {'online': False, 'error': f'{type(e).__name__}: {e}'})
         if p.endswith('/ai-log'):
             return self.do_ai_log()
+        if p == '/camera':
+            return self.do_camera()
         if p == '/api/state':
             return self._send(200, {'scene': db.scene_get(), 'sketches': db.sketches(),
                                     'tokens': db.counter_get()})
@@ -617,6 +650,29 @@ class H(BaseHTTPRequestHandler):
                              'support': support, 'infill': infill})
         except Exception as e:
             self._send(500, {'error': f'{type(e).__name__}: {e}'})
+
+    def do_camera(self):
+        """MJPEG-поток: браузер показывает его обычным <img>, скрипт не нужен."""
+        try:
+            c = cfg()
+        except (OSError, ValueError) as e:
+            return self._send(500, {'error': f'нет ~/.pen3d.json: {e}'})
+        try:
+            frames = camera_frames(c['ip'], c['code'])
+            first = next(frames)
+        except Exception as e:
+            return self._send(502, {'error': f'камера недоступна: {type(e).__name__}: {e}'})
+        self.send_response(200)
+        self.send_header('content-type', 'multipart/x-mixed-replace; boundary=pen3dframe')
+        self.send_header('cache-control', 'no-store')
+        self.end_headers()
+        try:
+            for jpg in itertools.chain([first], frames):
+                self.wfile.write(b'--pen3dframe\r\nContent-Type: image/jpeg\r\n'
+                                 + f'Content-Length: {len(jpg)}\r\n\r\n'.encode() + jpg + b'\r\n')
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, ConnectionError):
+            pass            # вкладку закрыли или принтер оборвал поток — это норма
 
     def do_ai_log(self):
         self._send(200, {'rows': db.log_rows()})
