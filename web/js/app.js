@@ -103,9 +103,12 @@ function solidMat(color){
   if(!matCache.has(c)) matCache.set(c, new THREE.MeshStandardMaterial({color:c, roughness:.5, metalness:.05}));
   return matCache.get(c);
 }
+// Погружённая часть сидит внутри непрозрачного тела, поэтому тест глубины её отбрасывал
+// и на экране не было видно ничего. Рисуем поверх всего, как рентген.
 const GHOST = new THREE.MeshStandardMaterial({color:0xff5a76, roughness:.4, metalness:0,
-  transparent:true, opacity:.55, depthWrite:false});
-const GHOST_EDGE = new THREE.LineDashedMaterial({color:0xffd0d8, dashSize:2.2, gapSize:1.6});
+  transparent:true, opacity:.5, depthWrite:false, depthTest:false});
+const GHOST_EDGE = new THREE.LineDashedMaterial({color:0xffd0d8, dashSize:2.2, gapSize:1.6,
+  depthTest:false, transparent:true});
 let ghost = null;
 
 // Видно, какая часть отверстия реально сидит в детали, а какая торчит наружу
@@ -119,10 +122,13 @@ function updateGhost(){
   catch(e){ return; }
   if(!res){ ghostDepth = null; return; }
   ghost = new THREE.Group();
+  ghost.renderOrder = 999;                 // поверх детали, иначе его закроет её поверхность
   const body = new THREE.Mesh(res.geometry, GHOST);
+  body.renderOrder = 999;
   ghost.add(body);
   const edges = new THREE.LineSegments(new THREE.EdgesGeometry(res.geometry, 25), GHOST_EDGE);
   edges.computeLineDistances();
+  edges.renderOrder = 1000;
   ghost.add(edges);
   scene.add(ghost);
   const sz = new THREE.Vector3(); res.box.getSize(sz);
@@ -539,6 +545,27 @@ function setView(v){
 }
 document.querySelectorAll('[data-view]').forEach(b => b.onclick = () => setView(b.dataset.view));
 
+// Виды ставят камеру на весь стол 256 мм, поэтому деталь на 20 мм видна как точка,
+// а подписи и подсветка отверстия сливаются. F подводит камеру к тому, что выбрано.
+function focusSelection(){
+  const o = sel(), m = o && meshOf(o.id);
+  const box = new THREE.Box3();
+  if(m && m.visible){ m.updateMatrixWorld(); box.expandByObject(m); }
+  else objects.filter(x => x.vis).forEach(x => { const q = meshOf(x.id);
+    if(q){ q.updateMatrixWorld(); box.expandByObject(q); } });
+  if(box.isEmpty()) return say('нечего приближать', 'err');
+  const c = box.getCenter(new THREE.Vector3()), sz = box.getSize(new THREE.Vector3());
+  const r = Math.max(sz.x, sz.y, sz.z) || 10;
+  const dist = r / (2 * Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2)) * 2.4;
+  const dir = cam.position.clone().sub(orbit.target).normalize();
+  fly = null;                                  // ручной перелёт отменяет анимацию столов
+  orbit.target.copy(c);
+  cam.position.copy(c).add(dir.multiplyScalar(Math.max(dist, r * 1.5)));
+  orbit.update();
+  say(o ? `приближено: ${o.name}` : 'приближено к детали');
+}
+$('focus')?.addEventListener('click', focusSelection);
+
 // ---------- клавиши ----------
 addEventListener('keydown', e => {
   if(/INPUT|TEXTAREA/.test(document.activeElement.tagName) || document.activeElement.isContentEditable) return;
@@ -549,6 +576,7 @@ addEventListener('keydown', e => {
   if(e.key === 'Escape'){ if(sketching) $('sketch').click(); else select(null); return; }
   const k = e.key.toLowerCase();
   if(k === 'g') setMode('translate'); if(k === 'r') setMode('rotate'); if(k === 's') setMode('scale');
+  if(k === 'f'){ e.preventDefault(); focusSelection(); return; }
   if(e.key >= '1' && e.key <= '4') setView(['iso','top','front','side'][e.key - 1]);
 });
 

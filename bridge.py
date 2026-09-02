@@ -517,15 +517,44 @@ class ImplicitFTP_TLS(ftplib.FTP_TLS):
         self._sock = value
 
 
+def file_md5(path):
+    import hashlib
+    h = hashlib.md5()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def upload(path, name, ip, code):
+    """Кладём в /cache: именно там принтер ищет задание, файл в корне он молча отменяет."""
     ctx = ssl._create_unverified_context()
     ftp = ImplicitFTP_TLS(context=ctx)
     ftp.connect(host=ip, port=990, timeout=30)
     ftp.login('bblp', code)
     ftp.prot_p()
+    try:
+        ftp.cwd('/cache')
+    except ftplib.error_perm:
+        ftp.mkd('/cache'); ftp.cwd('/cache')
+    for old in ftp.nlst():                     # свои прошлые задания подчищаем, чужие не трогаем
+        if old.startswith('pen3d-') and old.endswith('.3mf') and old != name:
+            try: ftp.delete(old)
+            except ftplib.error_perm: pass
     with open(path, 'rb') as f:
-        ftp.storbinary(f'STOR {name}', f)
-    ftp.quit()
+        try:
+            ftp.storbinary(f'STOR {name}', f)
+        except (TimeoutError, ssl.SSLError, OSError):
+            pass                               # принтер не закрывает TLS по-человечески: файл уже долетел
+    try:
+        size = ftp.size(name)
+    except (ftplib.Error, OSError, TimeoutError):
+        size = None
+    try: ftp.quit()
+    except (ftplib.Error, OSError, TimeoutError): pass
+    real = os.path.getsize(path)
+    if size is not None and size != real:
+        raise RuntimeError(f'файл долетел не целиком: {size} из {real} байт')
 
 
 PRINTER = {'state': {}, 'ts': 0, 'error': None, 'client': None}
@@ -629,13 +658,16 @@ def printer_status():
     }
 
 
-def start_print(name, ip, code, serial):
+def start_print(name, ip, code, serial, md5=None):
     import paho.mqtt.client as mqtt
+    # url именно ftp:///cache/... — с file:///sdcard/... принтер молча отменяет задание,
+    # а md5 обязателен: без него файл считается битым. Ключ bed_levelling пишется с двумя l.
     payload = {"print": {
-        "sequence_id": "0", "command": "project_file", "param": "Metadata/plate_1.gcode",
-        "url": f"file:///sdcard/{name}", "subtask_name": name.rsplit('.', 1)[0],
-        "bed_type": "auto", "timelapse": False, "bed_leveling": True, "flow_cali": True,
-        "vibration_cali": True, "layer_inspect": False, "use_ams": False,
+        "sequence_id": "1", "command": "project_file", "param": "Metadata/plate_1.gcode",
+        "url": f"ftp:///cache/{name}", "subtask_name": name.rsplit('.', 1)[0],
+        "md5": (md5 or '').upper(), "ams_mapping": "",
+        "bed_type": "auto", "timelapse": False, "bed_levelling": True, "flow_cali": True,
+        "vibration_cali": False, "layer_inspect": True, "use_ams": False,
         "profile_id": "0", "project_id": "0", "subtask_id": "0", "task_id": "0"}}
     c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     c.username_pw_set('bblp', code)
@@ -752,7 +784,7 @@ class H(BaseHTTPRequestHandler):
                 name = f'pen3d-{uuid.uuid4().hex[:6]}.3mf'
                 upload(mf, name, c['ip'], c['code'])
                 if do_print:
-                    start_print(name, c['ip'], c['code'], c['serial'])
+                    start_print(name, c['ip'], c['code'], c['serial'], file_md5(mf))
             self._send(200, {'ok': True, 'file': name, 'printing': do_print,
                              'support': support, 'infill': infill})
         except Exception as e:
