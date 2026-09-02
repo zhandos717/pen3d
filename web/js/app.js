@@ -214,6 +214,9 @@ function restore(s){
   if(!byId(selId)) selId = null;
   sync();
 }
+$('lang').value = localStorage.lang || 'ru';
+$('lang').onchange = e => { localStorage.lang = e.target.value; location.reload(); };
+
 $('undo').onclick = () => { if(!hist.length) return; redoStack.push(snapshot()); restore(hist.pop()); say('отменено'); };
 $('redo').onclick = () => { if(!redoStack.length) return; hist.push(snapshot()); restore(redoStack.pop()); say('повторено'); };
 let gizmoStart = null;
@@ -278,6 +281,9 @@ document.querySelectorAll('[data-add]').forEach(b => b.onclick = () => add(b.dat
 $('del').onclick = () => { const o = sel(); if(!o) return;
   push();
   objects = objects.filter(x => x !== o); selId = null; sync(); say('удалён: ' + o.name); };
+$('hud-dup').onclick = () => $('dup').click();
+$('hud-del').onclick = () => $('del').click();
+
 $('dup').onclick = () => { const o = sel(); if(!o) return;
   push();
   const c = {...o, id: nextId++, name: o.name + ' копия', x: o.x + 10, y: o.y + 10, pts: o.pts && o.pts.map(p => p.slice())};
@@ -910,6 +916,7 @@ $('cam').onerror = () => $('cam-hint').textContent = 'камера не отве
 
 // ---------- размеры в сцене ----------
 const labels = $('labels');
+let hudAt = [-1, -1];
 const pool = [];
 function label(i, text, v, cls){
   let el = pool[i];
@@ -935,6 +942,28 @@ function drawLabels(){
   label(i++, act === 0 ? 'МОЙ СТОЛ · в печать' : 'мой стол', V(0, 0, -BED/2 - 14), act === 0 ? '' : 'bed');
   label(i++, act === 1 ? 'СТОЛ АГЕНТА · в печать' : 'стол агента',
         V(PLATE_GAP, 0, -BED/2 - 14), act === 1 ? '' : 'bed');
+
+  // мини-панель висит над выбранной фигурой, чтобы не бегать в угол сцены
+  const hud = $('hud'), selHud = sel(), mHud = selHud && meshOf(selHud.id);
+  // прячем на время перетаскивания: панель прыгала бы за фигурой и мешала целиться
+  if(mHud && mHud.visible && !sketching && !gizmo.dragging){
+    mHud.updateMatrixWorld();
+    const b = new THREE.Box3().setFromObject(mHud), c = new THREE.Vector3();
+    b.getCenter(c);
+    const p = new THREE.Vector3(c.x, b.max.y, c.z).project(cam);
+    if(p.z < 1){                                  // z > 1 — точка за камерой, координаты переворачиваются
+      const W = labels.clientWidth, H = labels.clientHeight;
+      const half = (hud.offsetWidth || 150) / 2;
+      const x = Math.round(Math.min(W - half - 6, Math.max(half + 6, (p.x*.5 + .5) * W)));
+      // зазор больше высоты стрелки гизмо, иначе панель липнет к фигуре и мешает
+      const y = Math.round(Math.min(H - 8, Math.max(46, (-p.y*.5 + .5) * H - 58)));
+      hud.hidden = false;
+      if(x !== hudAt[0] || y !== hudAt[1]){       // без этого каждый кадр дёргается раскладка
+        hud.style.left = x + 'px'; hud.style.top = y + 'px';
+        hudAt = [x, y];
+      }
+    } else hud.hidden = true;
+  } else hud.hidden = true;
 
   // глубина захода отверстия
   const selObj = sel();

@@ -28,14 +28,20 @@ Other Bambu printers (P1/X1) speak the same protocol and differ only in slicer p
 ## Getting started
 
 ```bash
+make run
+```
+
+That creates the virtualenv, installs dependencies and starts the server. Without `make`:
+
+```bash
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python bridge.py
 ```
 
 Open <http://127.0.0.1:8765>. Without a config you can still model and download STL — printing and AI need the file below.
 
-Sanity checks: `.venv/bin/python bridge.py --selfcheck` slices a test cube; `.venv/bin/python db.py` exercises the database.
+Sanity checks: `make check` runs both — slicing a test cube with the fastener templates, and exercising the database. `make help` lists every target.
 
 ## Configuration — `~/.pen3d.json`
 

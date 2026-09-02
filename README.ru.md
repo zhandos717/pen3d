@@ -36,13 +36,18 @@ web/
 Нужны macOS с установленной Bambu Studio (для CLI-слайсинга) и Python 3.11+.
 
 ```
+make run
+```
+
+Создаст окружение, поставит зависимости и запустит сервер. Без `make`:
+
+```
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python bridge.py
 ```
 
-Проверить, что слайсер жив: `.venv/bin/python bridge.py --selfcheck`.
-Проверить базу: `.venv/bin/python db.py`.
+Проверки: `make check` прогоняет обе — слайсер с тестовым кубом и шаблонами крепежа, и базу. `make help` покажет все цели.
 
 ## Хранение
 
