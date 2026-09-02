@@ -137,7 +137,8 @@ class H(BaseHTTPRequestHandler):
             return self._send(404, {'error': 'not found'})
         body = open(path, 'rb').read()
         ctype = {'.html': 'text/html', '.js': 'text/javascript',
-                 '.css': 'text/css', '.json': 'application/json'}.get(os.path.splitext(path)[1], 'application/octet-stream')
+                 '.css': 'text/css', '.json': 'application/json',
+                 '.svg': 'image/svg+xml'}.get(os.path.splitext(path)[1], 'application/octet-stream')
         self.send_response(200)
         self.send_header('cache-control', 'no-store')
         self.send_header('content-type', ctype + '; charset=utf-8')
