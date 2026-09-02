@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.omc/
+ai-log.jsonl
+out.3mf
+*.stl
+*.3mf
+.DS_Store

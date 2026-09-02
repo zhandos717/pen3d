@@ -1,0 +1,577 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>pen3d</title>
+<style>
+:root{
+  --bg:#0e0f12; --panel:#16181d; --line:#24272e; --ink:#e6e8ec; --dim:#8a909b;
+  --accent:#2dd4a7; --accent-ink:#04150f; --danger:#f87171;
+}
+*{box-sizing:border-box}
+body{margin:0;height:100vh;display:flex;flex-direction:column;
+  background:var(--bg);color:var(--ink);
+  font:13px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif}
+
+header{display:flex;align-items:center;gap:14px;padding:0 16px;height:48px;
+  background:var(--panel);border-bottom:1px solid var(--line);flex:none}
+.logo{font-weight:600;letter-spacing:.02em}
+.logo span{color:var(--accent)}
+header .sep{flex:1}
+#status{color:var(--dim);font-variant-numeric:tabular-nums;
+  max-width:52ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#status.err{color:var(--danger)}
+#status.ok{color:var(--accent)}
+
+main{flex:1;display:flex;min-height:0}
+aside{width:280px;flex:none;background:var(--panel);border-right:1px solid var(--line);
+  overflow-y:auto;padding:14px}
+.grp{margin-bottom:20px}
+.grp h2{margin:0 0 9px;font-size:10.5px;font-weight:600;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--dim)}
+.stack{display:flex;flex-direction:column;gap:7px}
+.pair{display:flex;gap:7px}
+.pair>*{flex:1;min-width:0}
+
+label.f{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  background:#1b1e25;border:1px solid var(--line);border-radius:7px;padding:5px 6px 5px 10px;
+  color:var(--dim)}
+label.f input{width:66px;text-align:right;background:transparent;border:0;
+  color:var(--ink);font:inherit;padding:2px 4px;outline:none}
+label.f input:focus{background:#0e0f12;border-radius:4px}
+
+button,select{font:inherit;color:var(--ink);background:#1b1e25;
+  border:1px solid var(--line);border-radius:7px;padding:7px 11px;cursor:pointer;
+  text-align:center;transition:background .12s,border-color .12s}
+button:hover:not(:disabled),select:hover{background:#232733;border-color:#333846}
+button:active:not(:disabled){transform:translateY(.5px)}
+button:disabled{opacity:.45;cursor:default}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+button.primary:hover:not(:disabled){background:#3ee3b6;border-color:#3ee3b6}
+button.ghost{background:transparent}
+button.tool.on{background:#193a31;border-color:var(--accent);color:var(--accent)}
+#hole.on{background:#3a1a22;border-color:#d0455f;color:#f0879b}
+#side.on{background:#182a45;border-color:#5b8def;color:#8fb4f7}
+
+textarea,input[type=password]{width:100%;font:inherit;color:var(--ink);
+  background:#1b1e25;border:1px solid var(--line);border-radius:7px;padding:8px 10px;
+  outline:none;resize:vertical}
+textarea:focus,input[type=password]:focus,select:focus{border-color:#39566a}
+textarea::placeholder,input::placeholder{color:#5c626e}
+textarea{height:70px}
+
+.hint{color:#666c78;font-size:11px;margin-top:8px;line-height:1.6}
+kbd{background:#1b1e25;border:1px solid var(--line);border-bottom-width:2px;
+  border-radius:4px;padding:0 4px;font:11px ui-monospace,monospace;color:var(--dim)}
+code{font:11px ui-monospace,monospace;color:var(--dim)}
+
+.panes{flex:1;display:flex;min-width:0}
+.pane{flex:1;min-width:0;position:relative;display:flex}
+.pane+.pane{border-left:1px solid var(--line)}
+.pane>.cap{position:absolute;top:10px;left:12px;z-index:2;color:var(--dim);
+  font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;pointer-events:none}
+canvas{flex:1;width:100%;height:100%;display:block}
+#pad{cursor:default;touch-action:none;background:#0b0c0e}
+#view{background:#111318}
+#dims{position:absolute;bottom:10px;left:12px;color:var(--dim);
+  font-variant-numeric:tabular-nums;pointer-events:none}
+</style>
+
+<header>
+  <div class="logo">pen<span>3d</span></div>
+  <div class="sep"></div>
+  <div id="status">нарисуй контур на левой доске</div>
+</header>
+
+<main>
+  <aside>
+    <div class="grp">
+      <h2>Инструмент</h2>
+      <div class="stack">
+        <div class="pair">
+          <button class="tool on" data-tool="move">Выбор</button>
+          <button class="tool" data-tool="pen">Перо</button>
+        </div>
+        <div class="pair">
+          <button class="tool" data-tool="rect">Прямоуг.</button>
+          <button class="tool" data-tool="ellipse">Круг</button>
+        </div>
+        <button class="tool" data-tool="poly">N-угольник</button>
+        <label class="f">сторон <input id="sides" type="number" value="6" min="3" max="64" step="1"></label>
+        <div class="pair">
+          <button id="hole">Отверстие ↓</button>
+          <button id="side">Отверстие →</button>
+        </div>
+        <label class="f">центр отв., мм <input id="hz" type="number" value="5" min="0" step="1"></label>
+      </div>
+      <div class="hint">Фигуры рисуешь протяжкой, размеры видно прямо на доске. Ровный квадрат — <kbd>Alt</kbd>+тащить. <b>Отверстие ↓</b> — сквозь толщину, красный пунктир. <b>Отверстие →</b> — сбоку насквозь: фигура читается как вид сбоку (ширина — по X, высота — от «центра отв.»), синий пунктир.</div>
+    </div>
+
+    <div class="grp">
+      <h2>Контур</h2>
+      <div class="stack">
+        <button id="undo">Убрать последнюю</button>
+        <button class="ghost" id="clear">Очистить доску</button>
+      </div>
+    </div>
+
+    <div class="grp">
+      <h2>Деталь</h2>
+      <div class="stack">
+        <label class="f">высота, мм <input id="depth" type="number" value="10" min="0.2" step="1"></label>
+        <label class="f">низ, мм <input id="z0" type="number" value="0" min="0" step="1"></label>
+        <label class="f">масштаб, мм/px <input id="scale" type="number" value="0.2" min="0.01" step="0.05"></label>
+        <button class="primary" id="build">Построить 3D</button>
+      </div>
+      <div class="hint">«низ» поднимает фигуру над столом — так ставится второй ярус поверх первого. Инструментом «Выбор» щёлкни фигуру, чтобы менять её высоту и уровень.</div>
+    </div>
+
+    <div class="grp">
+      <h2>Печать</h2>
+      <div class="stack">
+        <button id="stl">Скачать STL</button>
+        <button id="send">Залить на A1</button>
+        <button id="print">Печатать сейчас</button>
+      </div>
+      <div class="hint">Нужен <code>~/.pen3d.json</code> с IP, access code и serial принтера.</div>
+    </div>
+
+    <div class="grp">
+      <h2>Генерация</h2>
+      <div class="stack">
+        <textarea id="ai" placeholder="шестерня на 12 зубьев&#10;крючок для наушников&#10;подставка под телефон"></textarea>
+        <select id="prov">
+          <option value="deepseek">DeepSeek — через мостик</option>
+          <option value="anthropic">Anthropic — ключ в браузере</option>
+        </select>
+        <input id="key" type="password" placeholder="sk-ant-… (только для Anthropic)">
+        <button id="gen">Сгенерировать контур</button>
+      </div>
+    </div>
+
+    <div class="grp">
+      <h2>Навигация</h2>
+      <div class="hint">
+        <kbd>ЛКМ</kbd> — рисовать / выбирать / вращать<br>
+        <kbd>Delete</kbd> — удалить выбранную фигуру<br>
+        <kbd>ПКМ</kbd> или <kbd>Shift</kbd>+тащить — двигать вид<br>
+        <kbd>колесо</kbd> — масштаб<br>
+        <kbd>Esc</kbd> — вписать стол в окно
+      </div>
+    </div>
+  </aside>
+
+  <div class="panes">
+    <div class="pane">
+      <div class="cap">эскиз</div>
+      <canvas id="pad"></canvas>
+    </div>
+    <div class="pane">
+      <div class="cap">модель</div>
+      <canvas id="view"></canvas>
+      <div id="dims"></div>
+    </div>
+  </div>
+</main>
+
+<script type="importmap">
+{"imports":{
+  "three": "https://cdn.jsdelivr.net/npm/three@0.175.0/build/three.module.js",
+  "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.7.8/src/index.js",
+  "three-bvh-csg": "https://cdn.jsdelivr.net/npm/three-bvh-csg@0.0.17/src/index.js"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { Brush, Evaluator, SUBTRACTION } from 'three-bvh-csg';
+const csg = new Evaluator();
+
+const BED_MM = 256;                       // стол A1
+const boardPx = () => BED_MM / (+$('scale').value || 0.2);
+const $ = id => document.getElementById(id);
+function say(text, kind=''){ const s = $('status'); s.textContent = text; s.className = kind; }
+
+// --- эскиз ---
+const pad = $('pad'), ctx = pad.getContext('2d');
+let shapes = [];            // [{pts, hole}]
+let pts = [], drawing = false, panning = null, preview = null;
+const MM = () => +$('scale').value;
+function bbox(p){ const xs=p.map(q=>q[0]), ys=p.map(q=>q[1]);
+  return {x0:Math.min(...xs), y0:Math.min(...ys), x1:Math.max(...xs), y1:Math.max(...ys)}; }
+const vt = {x:0, y:0, z:1};
+
+function fit(){
+  const w = pad.clientWidth, h = pad.clientHeight, B = boardPx();
+  vt.z = Math.min(w, h) / B * 0.88;
+  vt.x = (w - B*vt.z)/2; vt.y = (h - B*vt.z)/2;
+  redraw();
+}
+function redraw(){
+  const w = pad.clientWidth, h = pad.clientHeight, dpr = devicePixelRatio || 1;
+  if(pad.width !== w*dpr || pad.height !== h*dpr){ pad.width = w*dpr; pad.height = h*dpr; }
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle = '#0b0c0e'; ctx.fillRect(0,0,w,h);
+  ctx.translate(vt.x, vt.y); ctx.scale(vt.z, vt.z);
+
+  const B = boardPx(), step = 10/MM();          // сетка 10 мм
+  ctx.fillStyle = '#fbfbfc'; ctx.fillRect(0,0,B,B);
+  ctx.strokeStyle = '#eceef2'; ctx.lineWidth = 1/vt.z;
+  for(let i=step;i<B-0.5;i+=step){
+    ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,B); ctx.moveTo(0,i); ctx.lineTo(B,i); ctx.stroke();
+  }
+  ctx.strokeStyle = '#dfe2e8'; ctx.lineWidth = 1.5/vt.z;
+  for(let i=step*5;i<B-0.5;i+=step*5){
+    ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,B); ctx.moveTo(0,i); ctx.lineTo(B,i); ctx.stroke();
+  }
+  ctx.strokeStyle = '#b6bac3'; ctx.lineWidth = 1.5/vt.z; ctx.strokeRect(0,0,B,B);
+  ctx.fillStyle = '#a8adb8'; ctx.font = `${11/vt.z}px -apple-system,system-ui,sans-serif`;
+  ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  ctx.fillText('стол A1 · 256 × 256 мм · клетка 10 мм', 4/vt.z, B + 6/vt.z);
+
+  ctx.lineJoin = ctx.lineCap = 'round';
+  shapes.forEach((sh, i) => drawShape(sh.pts, COLOR[sh.kind], sh.kind !== 'solid',
+                                      i === sel || i === shapes.length-1, i === sel));
+  if(pts.length) drawShape(pts, COLOR[kind], kind !== 'solid', true);
+  if(preview) drawShape(preview, COLOR[kind], kind !== 'solid', true);
+}
+
+function drawShape(p, color, hole, labeled, selected){
+  if(p.length < 2) return;
+  if(selected){
+    const b = bbox(p), m = 6/vt.z;
+    ctx.strokeStyle = '#5b8def'; ctx.lineWidth = 1/vt.z; ctx.setLineDash([4/vt.z, 4/vt.z]);
+    ctx.strokeRect(b.x0-m, b.y0-m, b.x1-b.x0+2*m, b.y1-b.y0+2*m);
+    ctx.setLineDash([]);
+  }
+  ctx.strokeStyle = color; ctx.lineWidth = (selected ? 3.5 : 2.5)/vt.z;
+  ctx.setLineDash(hole ? [7/vt.z, 5/vt.z] : []);
+  ctx.beginPath(); ctx.moveTo(p[0][0], p[0][1]);
+  p.slice(1).forEach(q => ctx.lineTo(q[0], q[1]));
+  ctx.stroke(); ctx.setLineDash([]);
+  if(hole){ ctx.fillStyle = 'rgba(208,69,95,.10)'; ctx.fill(); }
+  if(!labeled) return;
+  const b = bbox(p), mm = MM();
+  ctx.fillStyle = color; ctx.font = `${12/vt.z}px -apple-system,system-ui,sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.fillText(`${((b.x1-b.x0)*mm).toFixed(1)} × ${((b.y1-b.y0)*mm).toFixed(1)} мм`,
+               (b.x0+b.x1)/2, b.y0 - 6/vt.z);
+}
+const at = e => { const r = pad.getBoundingClientRect();
+  return [(e.clientX-r.left-vt.x)/vt.z, (e.clientY-r.top-vt.y)/vt.z]; };
+
+let tool = 'move', shapeFrom = null, square = false;
+let sel = -1, moveFrom = null, kind = 'solid';   // solid | hole | side
+function setKind(k){
+  kind = kind === k ? 'solid' : k;
+  $('hole').classList.toggle('on', kind === 'hole');
+  $('side').classList.toggle('on', kind === 'side');
+  say({solid:'следующая фигура — контур детали',
+       hole:'следующая фигура вырежет отверстие сквозь толщину',
+       side:'следующая фигура вырежет отверстие сбоку (вид сбоку)'}[kind]);
+  redraw();
+}
+$('hole').onclick = () => setKind('hole');
+$('side').onclick = () => setKind('side');
+const COLOR = {solid:'#12b184', hole:'#d0455f', side:'#5b8def'};
+function commit(p){
+  if(p.length < 3) return;
+  const k = kind !== 'solid' && !shapes.some(s => s.kind === 'solid') ? 'solid' : kind;
+  shapes.push({pts: p.slice(), kind: k, hz: +$('hz').value,
+               h: +$('depth').value, z0: +$('z0').value});
+  pts = []; preview = null; build();
+}
+document.querySelectorAll('.tool').forEach(b => b.onclick = () => {
+  tool = b.dataset.tool;
+  document.querySelectorAll('.tool').forEach(x => x.classList.toggle('on', x === b));
+  pad.style.cursor = tool === 'move' ? 'default' : 'crosshair';
+  if(tool !== 'move'){ sel = -1; redraw(); }
+  say({move:'кликни фигуру и тащи; Delete — удалить',
+       pen:'перо: рисуй от руки'}[tool] || 'тяни мышью, чтобы задать размер фигуры');
+});
+
+function pick(p){
+  for(let i = shapes.length-1; i >= 0; i--) if(inside(p, shapes[i].pts)) return i;
+  return -1;
+}
+
+function shapePts(a, b){
+  let [x0,y0] = a, [x1,y1] = b;
+  if(square){ const d = Math.max(Math.abs(x1-x0), Math.abs(y1-y0));
+    x1 = x0 + Math.sign(x1-x0)*d; y1 = y0 + Math.sign(y1-y0)*d; }
+  const cx = (x0+x1)/2, cy = (y0+y1)/2, rx = Math.abs(x1-x0)/2, ry = Math.abs(y1-y0)/2;
+  if(tool === 'rect') return [[x0,y0],[x1,y0],[x1,y1],[x0,y1],[x0,y0]];
+  const n = tool === 'ellipse' ? 64 : Math.max(3, Math.min(64, +$('sides').value || 6));
+  const turn = tool === 'ellipse' ? 0 : -Math.PI/2;
+  const out = [];
+  for(let i=0;i<=n;i++){ const t = turn + i/n*Math.PI*2;
+    out.push([cx + rx*Math.cos(t), cy + ry*Math.sin(t)]); }
+  return out;
+}
+
+pad.oncontextmenu = e => e.preventDefault();
+pad.onpointerdown = e => {
+  pad.setPointerCapture(e.pointerId);
+  if(e.button !== 0 || e.shiftKey){ panning = [e.clientX, e.clientY]; return; }
+  if(tool === 'move'){
+    const p = at(e);
+    sel = pick(p);
+    moveFrom = sel >= 0 ? p : null;
+    if(sel < 0) panning = [e.clientX, e.clientY];
+    else if(shapes[sel].kind === 'solid'){
+      $('depth').value = shapes[sel].h; $('z0').value = shapes[sel].z0;
+    }
+    if(sel >= 0) say(`фигура ${sel+1} из ${shapes.length} · ` +
+             {solid:`контур · ${shapes[sel].z0}…${shapes[sel].z0+shapes[sel].h} мм`,
+              hole:'отверстие сверху', side:'отверстие сбоку'}[shapes[sel].kind]);
+    redraw(); return;
+  }
+  if(tool !== 'pen'){ shapeFrom = at(e); square = e.altKey; return; }
+  if(e.altKey){ panning = [e.clientX, e.clientY]; return; }
+  drawing = true; pts.push(at(e)); redraw();
+};
+pad.onpointermove = e => {
+  if(panning){ vt.x += e.clientX-panning[0]; vt.y += e.clientY-panning[1];
+    panning = [e.clientX, e.clientY]; redraw(); return; }
+  if(moveFrom){
+    const p = at(e), dx = p[0]-moveFrom[0], dy = p[1]-moveFrom[1];
+    shapes[sel].pts = shapes[sel].pts.map(q => [q[0]+dx, q[1]+dy]);
+    moveFrom = p; redraw(); return;
+  }
+  if(shapeFrom){ square = e.altKey; preview = shapePts(shapeFrom, at(e)); redraw(); return; }
+  if(!drawing) return;
+  const p = at(e), l = pts[pts.length-1];
+  if(Math.hypot(p[0]-l[0], p[1]-l[1]) > 4/vt.z){ pts.push(p); redraw(); }
+};
+pad.onpointerup = () => {
+  if(moveFrom){ moveFrom = null; build(); }
+  else if(shapeFrom && preview) commit(preview);
+  else if(drawing && pts.length > 2){ pts.push(pts[0].slice()); commit(pts); }
+  drawing = false; panning = null; shapeFrom = null; preview = null; redraw();
+};
+pad.onwheel = e => {
+  e.preventDefault();
+  const r = pad.getBoundingClientRect(), mx = e.clientX-r.left, my = e.clientY-r.top;
+  const k = Math.min(8, Math.max(0.15, vt.z * (1 - e.deltaY*0.0015)));
+  vt.x = mx - (mx-vt.x)*k/vt.z; vt.y = my - (my-vt.y)*k/vt.z; vt.z = k;
+  redraw();
+};
+addEventListener('keydown', e => {
+  if(e.key === 'Escape'){ sel = -1; fit(); return; }
+  if((e.key === 'Delete' || e.key === 'Backspace') && sel >= 0
+     && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)){
+    e.preventDefault(); shapes.splice(sel, 1); sel = -1; build(); redraw();
+  }
+});
+
+$('clear').onclick = () => { shapes = []; pts = []; preview = null;
+  if(mesh){ scene.remove(mesh); mesh = null; }
+  $('dims').textContent = ''; redraw(); say('доска очищена'); };
+$('undo').onclick = () => {
+  if(pts.length) pts = [];
+  else shapes.pop();
+  build(); redraw(); say(shapes.length ? `фигур: ${shapes.length}` : 'доска пуста');
+};
+
+// --- модель ---
+const view = $('view');
+const renderer = new THREE.WebGLRenderer({canvas:view, antialias:true});
+renderer.setPixelRatio(devicePixelRatio || 1);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x111318);
+const cam = new THREE.PerspectiveCamera(50,1,0.1,5000);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x2a2f3a, 2.2));
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.6);
+keyLight.position.set(1,2,1); scene.add(keyLight);
+const grid = new THREE.GridHelper(256, 16, 0x39404d, 0x22262e);
+grid.material.transparent = true; grid.material.opacity = .85; scene.add(grid);
+
+let mesh = null, orbit = {r:250, phi:1.0, theta:0.7}, down = null, panning3d = false;
+const target = new THREE.Vector3();
+function place(){
+  cam.position.set(
+    orbit.r*Math.sin(orbit.theta)*Math.cos(orbit.phi),
+    orbit.r*Math.cos(orbit.theta),
+    orbit.r*Math.sin(orbit.theta)*Math.sin(orbit.phi)).add(target);
+  cam.lookAt(target);
+}
+view.oncontextmenu = e => e.preventDefault();
+view.onpointerdown = e => { down = [e.clientX, e.clientY];
+  panning3d = e.button !== 0 || e.shiftKey; view.setPointerCapture(e.pointerId); };
+view.onpointerup = () => down = null;
+view.onpointermove = e => {
+  if(!down) return;
+  const dx = e.clientX-down[0], dy = e.clientY-down[1];
+  if(panning3d){
+    const back = new THREE.Vector3().subVectors(cam.position, target);
+    const right = new THREE.Vector3().copy(back).cross(cam.up).normalize();
+    const up = new THREE.Vector3().crossVectors(right, back).normalize();
+    const k = orbit.r * 0.002;
+    target.addScaledVector(right, -dx*k).addScaledVector(up, -dy*k);
+  } else {
+    orbit.phi -= dx*0.01;
+    orbit.theta = Math.min(3.0, Math.max(0.05, orbit.theta - dy*0.01));
+  }
+  down = [e.clientX, e.clientY];
+};
+view.onwheel = e => { e.preventDefault();
+  orbit.r = Math.min(2000, Math.max(20, orbit.r*(1 + e.deltaY*0.001))); };
+
+function loop(){
+  const w = view.clientWidth, h = view.clientHeight, dpr = renderer.getPixelRatio();
+  if(view.width !== Math.round(w*dpr) || view.height !== Math.round(h*dpr)){
+    renderer.setSize(w, h, false); cam.aspect = w/h; cam.updateProjectionMatrix();
+  }
+  place(); renderer.render(scene, cam); requestAnimationFrame(loop);
+}
+loop();
+addEventListener('resize', () => shapes.length ? redraw() : fit());
+
+function inside(p, poly){
+  let hit = false;
+  for(let i=0, j=poly.length-1; i<poly.length; j=i++){
+    const [xi,yi] = poly[i], [xj,yj] = poly[j];
+    if((yi > p[1]) !== (yj > p[1]) && p[0] < (xj-xi)*(p[1]-yi)/(yj-yi) + xi) hit = !hit;
+  }
+  return hit;
+}
+function sideGeo(sh, s, deep){
+  const b = bbox(sh.pts), zc = (b.y0+b.y1)/2;
+  const all = shapes.flatMap(x => x.pts), bb = bbox(all);
+  const cx = (bb.x0+bb.x1)/2;
+  const prof = new THREE.Shape(sh.pts.map(p =>
+    new THREE.Vector2((p[0]-cx)*s, (zc-p[1])*s + sh.hz)));
+  const g = new THREE.ExtrudeGeometry(prof, {depth: deep, bevelEnabled:false});
+  g.translate(0, 0, -deep/2);       // профиль в XY (x, высота), экструзия сквозь глубину Z
+  return g;
+}
+
+function build(keepView){
+  const solids = shapes.filter(s => s.kind === 'solid');
+  const holes = shapes.filter(s => s.kind === 'hole');
+  const sides = shapes.filter(s => s.kind === 'side');
+  if(mesh){ scene.remove(mesh); mesh = null; }
+  if(!solids.length){ say('нарисуй контур детали', 'err'); return false; }
+  const s = +$('scale').value;
+  const all = shapes.flatMap(sh => sh.pts);
+  const bb = bbox(all), cx = (bb.x0+bb.x1)/2, cy = (bb.y0+bb.y1)/2;
+  const v2 = p => new THREE.Vector2((p[0]-cx)*s, -(p[1]-cy)*s);
+
+  mesh = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial(
+    {color:0x2dd4a7, roughness:.45, metalness:.05, side:THREE.DoubleSide});
+  const bbAll = bbox(all), deep = (bbAll.y1-bbAll.y0)*s + 20;
+
+  solids.forEach(sol => {
+    const shape = new THREE.Shape(sol.pts.map(v2));
+    holes.filter(h => inside(h.pts[0], sol.pts))
+         .forEach(h => shape.holes.push(new THREE.Path(h.pts.map(v2))));
+    const geo = new THREE.ExtrudeGeometry(shape, {depth: sol.h, bevelEnabled:false});
+    geo.rotateX(-Math.PI/2);
+    geo.translate(0, sol.z0, 0);
+    let m = new THREE.Mesh(geo, mat);
+    if(sides.length){
+      try{
+        let brush = new Brush(geo); brush.updateMatrixWorld();
+        for(const sh of sides){
+          const cut = new Brush(sideGeo(sh, s, deep)); cut.updateMatrixWorld();
+          brush = csg.evaluate(brush, cut, SUBTRACTION);
+        }
+        m = new THREE.Mesh(brush.geometry, mat);
+      }catch(err){ say('вырез сбоку не удался: ' + err.message, 'err'); console.error(err); }
+    }
+    mesh.add(m);
+  });
+  scene.add(mesh);
+  const w = (bb.x1-bb.x0)*s, hh = (bb.y1-bb.y0)*s;
+  const d = Math.max(...solids.map(sh => sh.z0 + sh.h));
+  $('dims').textContent = `${w.toFixed(1)} × ${hh.toFixed(1)} × ${d} мм · стол A1 256×256`;
+  if(!keepView){ orbit.r = Math.max(w, hh, d)*2.5 + 30; target.set(0, d/2, 0); }
+  const tooBig = Math.max(w, hh) > 256;
+  const n = holes.length + sides.length;
+  const note = n ? ` · отверстий: ${n}` : '';
+  say(tooBig ? 'деталь больше стола A1' : 'модель готова' + note, tooBig ? 'err' : 'ok');
+  return true;
+}
+$('build').onclick = build;
+$('scale').oninput = () => { redraw(); if(shapes.length) build(); };
+$('depth').oninput = () => { if(sel >= 0) shapes[sel].h = +$('depth').value; build(true); };
+$('z0').oninput = () => { if(sel >= 0) shapes[sel].z0 = +$('z0').value; build(true); };
+$('hz').oninput = () => { if(sel >= 0 && shapes[sel].kind === 'side'){ shapes[sel].hz = +$('hz').value; build(); } };
+
+function stlText(){
+  if(!mesh && !build()) return null;
+  let out = 'solid pen3d\n';
+  mesh.children.forEach(m => {
+    const p = m.geometry.attributes.position.array;
+    for(let i=0;i<p.length;i+=9){
+      out += 'facet normal 0 0 0\nouter loop\n';
+      for(let j=0;j<9;j+=3) out += `vertex ${p[i+j]} ${p[i+j+1]} ${p[i+j+2]}\n`;
+      out += 'endloop\nendfacet\n';
+    }
+  });
+  return out + 'endsolid pen3d\n';
+}
+$('stl').onclick = () => {
+  const out = stlText(); if(!out) return;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([out], {type:'model/stl'}));
+  a.download = 'pen3d.stl'; a.click();
+  say('STL сохранён', 'ok');
+};
+
+async function toPrinter(path, btn, label){
+  const out = stlText(); if(!out) return;
+  if(path === '/print' && !confirm('Запустить печать на A1 прямо сейчас?')) return;
+  btn.disabled = true; btn.textContent = 'слайсим…'; say('слайсим в Bambu Studio, ~20 сек');
+  try{
+    const r = await fetch(path, {method:'POST', body: out});
+    const j = await r.json();
+    if(j.error) throw new Error(j.error);
+    say((j.printing ? 'печать запущена: ' : 'залито на принтер: ') + j.file, 'ok');
+  }catch(e){
+    say(e.message.split('\n')[0] + ' — проверь ~/.pen3d.json и LAN Only Mode', 'err');
+  }
+  btn.disabled = false; btn.textContent = label;
+}
+$('send').onclick = e => toPrinter('/upload', e.currentTarget, 'Залить на A1');
+$('print').onclick = e => toPrinter('/print', e.currentTarget, 'Печатать сейчас');
+
+// --- генерация контура ---
+const key = $('key'), prov = $('prov');
+key.value = localStorage.ak || '';
+key.oninput = () => localStorage.ak = key.value;
+prov.value = localStorage.prov || 'deepseek';
+prov.onchange = () => localStorage.prov = prov.value;
+
+$('gen').onclick = async e => {
+  const btn = e.currentTarget, task = $('ai').value.trim();
+  if(!task) return say('опиши, что генерировать', 'err');
+  btn.disabled = true; btn.textContent = 'думает…'; say('генерируем контур');
+  try{
+    let text;
+    if(prov.value === 'deepseek'){
+      const r = await fetch('/ai', {method:'POST', body: JSON.stringify({prompt: task})});
+      const j = await r.json();
+      if(j.error) throw new Error(j.error + ' — есть ли deepseek_key в ~/.pen3d.json?');
+      text = j.text;
+    } else {
+      if(!key.value) throw new Error('нужен Anthropic API-ключ');
+      const r = await fetch('https://api.anthropic.com/v1/messages', {method:'POST', headers:{
+        'content-type':'application/json', 'x-api-key':key.value,
+        'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true'},
+        body: JSON.stringify({model:'claude-sonnet-5', max_tokens:4000, messages:[{role:'user',
+          content:`Верни ТОЛЬКО JSON вида {"points":[[x,y],...],"depth":10} — замкнутый плоский контур детали в координатах холста 0..600 (центр 300,300), не менее 24 точек, без самопересечений, depth в мм. Деталь: ${task}`}]})});
+      const j = await r.json();
+      if(!j.content) throw new Error(JSON.stringify(j).slice(0,200));
+      text = j.content[0].text;
+    }
+    const obj = JSON.parse(text.match(/\{[\s\S]*\}/)[0]);
+    const p = obj.points.slice(); p.push(p[0].slice());
+    shapes = [{pts: p, kind: 'solid', hz: 0, h: +$('depth').value, z0: 0}]; pts = [];
+    if(obj.depth) $('depth').value = obj.depth;
+    fit(); build();
+  }catch(err){ say('AI: ' + err.message, 'err'); }
+  btn.disabled = false; btn.textContent = 'Сгенерировать контур';
+};
+
+fit();
+window.__dbg = () => ({kinds: shapes.map(s => s.kind), meshes: mesh ? mesh.children.map(m => m.geometry.attributes.position.count) : null});
+</script>
