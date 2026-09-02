@@ -295,6 +295,8 @@ code{font:11px ui-monospace,monospace;color:var(--dim)}
           <textarea id="ai" placeholder="подставка под телефон&#10;коробочка с крышкой&#10;крючок для наушников"></textarea>
           <button id="gen">Сгенерировать</button>
         <label class="f chk">агент с проверкой <input id="agent" type="checkbox" checked></label>
+        <label class="f">шагов не больше <input id="max-steps" type="number" value="10" min="2" max="20" step="1"></label>
+        <button id="stop" disabled>Остановить агента</button>
         <div class="pair">
           <button class="sm" id="take">Забрать к себе</button>
           <button class="sm" id="wipe-agent">Очистить стол агента</button>

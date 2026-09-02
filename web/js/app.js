@@ -584,11 +584,13 @@ const saveTokens = () => fetch('/api/tokens', {method:'POST', headers:{'content-
 function showTokens(){
   $('tokens').textContent = tok.calls
     ? `запросов ${tok.calls} · ввод ${tok.in.toLocaleString('ru')} · ответ ${tok.out.toLocaleString('ru')} · всего ${(tok.in+tok.out).toLocaleString('ru')}`
+      + (tok.cached ? ` · из кэша ${tok.cached.toLocaleString('ru')} (дешевле)` : '')
     : 'пока ничего не потрачено';
 }
 function addTokens(u){
   if(!u) return;
   tok.in += u.prompt_tokens || 0; tok.out += u.completion_tokens || 0; tok.calls++;
+  tok.cached = (tok.cached || 0) + (u.prompt_cache_hit_tokens || 0);
   saveTokens(); showTokens();
 }
 $('tokens-reset').onclick = () => { tok.in = tok.out = tok.calls = 0;
@@ -607,10 +609,17 @@ function showAgentShapes(shapes){
   sync();
 }
 
+$('stop').onclick = async () => {
+  $('stop').disabled = true;
+  await fetch('/agent/stop', {method:'POST', body:'{}'});
+  say('останавливаем агента — доработает текущий шаг');
+};
+
 async function runAgentStream(task, onEvent){
   const r = await fetch('/agent/stream', {method:'POST', headers:{'content-type':'application/json'},
     body: JSON.stringify({task, scene: objects.filter(o => o.plate).map(({plate, ...o}) => o),
-                          model: model.value, base_url: base.value, key: key.value})});
+                          model: model.value, base_url: base.value, key: key.value,
+                          max_steps: +$('max-steps').value || 10})});
   if(!r.ok || !r.body) throw new Error('сервер не отдал поток: ' + r.status);
   const reader = r.body.getReader(), dec = new TextDecoder();
   let buf = '', last = null;
@@ -663,7 +672,7 @@ $('gen').onclick = async e => {
   btn.disabled = true; btn.textContent = 'думает…'; say(`${model.value} думает…`);
   try{
     if($('agent').checked && prov.value !== 'anthropic'){
-      agentBusy = true; focusPlate(PLATE_GAP);
+      agentBusy = true; $('stop').disabled = false; focusPlate(PLATE_GAP);
       const j = await runAgentStream(task, ev => {
         if(ev.type === 'thinking'){ say(`агент думает… шаг ${ev.step + 1}`); return; }
         if(ev.type !== 'tool') return;
@@ -672,7 +681,7 @@ $('gen').onclick = async e => {
         say(`агент ${names[ev.tool] || ev.tool} ${ev.args?.name || ''}`.trim());
         if(ev.shapes) showAgentShapes(ev.shapes);        // деталь растёт на глазах
       });
-      agentBusy = false; markPlates();
+      agentBusy = false; $('stop').disabled = true; markPlates();
       if(j.error) throw new Error(j.error);
       push();
       const maxId = Math.max(0, ...objects.map(o => o.id));
@@ -689,7 +698,7 @@ $('gen').onclick = async e => {
       nextId = Math.max(0, ...objects.map(o => o.id)) + 1;
       selId = null; sync(); loadLog(); addTokens(j.usage);
       const steps = j.trace.filter(t => t.tool).length;
-      say(`агент собрал деталь на своём столе · шагов: ${steps}` +
+      say((j.stopped ? 'агент остановлен' : 'агент собрал деталь на своём столе') + ` · шагов: ${steps}` +
           (j.problems.length ? ` · осталось: ${j.problems[0]}` : ''), j.problems.length ? 'err' : 'ok');
       btn.disabled = false; btn.textContent = 'Сгенерировать';
       return;

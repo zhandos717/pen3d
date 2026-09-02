@@ -68,6 +68,8 @@ AGENT_PROMPT = """Ты инженер-конструктор. Собираешь
 thread (настоящая метрическая резьба: dia и pitch; шаг M6=1, M8=1.25, M10=1.5, M12=1.75, M14=2, M16=2).
 hole:true — тело вычитается из остальных. Оно вычитается ЦЕЛИКОМ, поэтому не должно быть шире детали.
 Фасок и скруглений нет — не пытайся делать их вычитанием, испортишь деталь.
+У cyl, box, poly ВСЕГДА задавай w и d явно: для цилиндра w = d = диаметр. Пропущенный размер
+молча станет 10 мм, и деталь выйдет не той, что просили.
 
 Порядок работы: поставь тела, вызови check, исправь всё, что он нашёл, снова check, и только
 после чистого check вызывай finish. Не пиши текст вместо вызова инструментов.
@@ -149,13 +151,31 @@ def check_scene(shapes):
     return problems
 
 
-def run_agent(task, scene, model, base, key, on_event=None):
+STOP = {'flag': False}
+
+
+def trim_history(messages, keep=6, limit=60000):
+    """DeepSeek кэширует общий ПРЕФИКС запроса и берёт за него в разы меньше,
+    поэтому историю не трогаем, пока она не станет неприлично большой:
+    правка старых сообщений обнуляет кэш и выходит дороже, чем сэкономленные токены."""
+    if sum(len(str(m.get('content') or '')) for m in messages) < limit:
+        return messages
+    tool_idx = [i for i, m in enumerate(messages) if m.get('role') == 'tool']
+    for i in tool_idx[:-keep]:
+        c = messages[i].get('content') or ''
+        if len(c) > 120:
+            messages[i] = dict(messages[i], content=c[:80] + ' …(свёрнуто)')
+    return messages
+
+
+def run_agent(task, scene, model, base, key, on_event=None, max_steps=10):
     """Цикл tool-use: модель строит деталь, проверяет её и правит сама."""
     import urllib.request
     shapes = [dict(o) for o in (scene or [])]
     next_id = max([o.get('id', 0) for o in shapes], default=0) + 1
     trace = []
-    usage = {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}
+    usage = {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0,
+             'prompt_cache_hit_tokens': 0, 'prompt_cache_miss_tokens': 0, 'steps': 0}
 
     def call(name, args):
         nonlocal next_id
@@ -199,15 +219,21 @@ def run_agent(task, scene, model, base, key, on_event=None):
     if key:
         headers['authorization'] = 'Bearer ' + key
 
-    for step in range(14):
+    STOP['flag'] = False
+    for step in range(max_steps):
+        if STOP['flag']:
+            trace.append({'step': step, 'stopped': True})
+            break
         req = urllib.request.Request(base + '/chat/completions', headers=headers,
             data=json.dumps({'model': model, 'max_tokens': 4000, 'tools': TOOLS,
-                             'messages': messages}).encode())
+                             'temperature': 0, 'messages': trim_history(messages)}).encode())
         if on_event:
             on_event({'type': 'thinking', 'step': step})
         r = json.load(urllib.request.urlopen(req, timeout=180))
+        u = r.get('usage') or {}
         for k in usage:
-            usage[k] += (r.get('usage') or {}).get(k, 0)
+            usage[k] += u.get(k, 0)
+        usage['steps'] = step + 1
         msg = r['choices'][0]['message']
         messages.append(msg)
         calls = msg.get('tool_calls') or []
@@ -242,7 +268,8 @@ def run_agent(task, scene, model, base, key, on_event=None):
         if done:
             break
 
-    return {'objects': shapes, 'trace': trace, 'problems': check_scene(shapes), 'usage': usage}
+    return {'objects': shapes, 'trace': trace, 'problems': check_scene(shapes),
+            'usage': usage, 'stopped': STOP['flag']}
 
 
 def log_ai(model, prompt, answer, usage=None, error=None):
@@ -396,6 +423,9 @@ class H(BaseHTTPRequestHandler):
             return self._send(500, {'error': f'{type(e).__name__}: {e}'})
         if self.path.rstrip('/').endswith('/ai'):
             return self.do_ai(json.loads(body))
+        if self.path.rstrip('/').endswith('/agent/stop'):
+            STOP['flag'] = True
+            return self._send(200, {'ok': True})
         if self.path.rstrip('/').endswith('/agent/stream'):
             return self.do_agent_stream(json.loads(body))
         if self.path.rstrip('/').endswith('/agent'):
@@ -443,7 +473,8 @@ class H(BaseHTTPRequestHandler):
             base = (req_body.get('base_url') or c.get('base_url') or 'https://api.deepseek.com').rstrip('/')
             model = req_body.get('model') or c.get('model') or 'deepseek-chat'
             key = req_body.get('key') or c.get('deepseek_key') or c.get('api_key') or ''
-            out = run_agent(req_body['task'], req_body.get('scene') or [], model, base, key, push)
+            out = run_agent(req_body['task'], req_body.get('scene') or [], model, base, key, push,
+                            int(req_body.get('max_steps') or 10))
             log_ai(model, 'Деталь: ' + req_body['task'],
                    json.dumps(out['objects'], ensure_ascii=False),
                    dict(out['usage'], steps=len(out['trace'])))
@@ -461,7 +492,8 @@ class H(BaseHTTPRequestHandler):
             base = (req_body.get('base_url') or c.get('base_url') or 'https://api.deepseek.com').rstrip('/')
             model = req_body.get('model') or c.get('model') or 'deepseek-chat'
             key = req_body.get('key') or c.get('deepseek_key') or c.get('api_key') or ''
-            out = run_agent(req_body['task'], req_body.get('scene') or [], model, base, key)
+            out = run_agent(req_body['task'], req_body.get('scene') or [], model, base, key, None,
+                            int(req_body.get('max_steps') or 10))
             log_ai(model, 'Деталь: ' + req_body['task'],
                    json.dumps(out['objects'], ensure_ascii=False),
                    dict(out['usage'], steps=len(out['trace'])))
