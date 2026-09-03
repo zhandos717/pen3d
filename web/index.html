@@ -314,6 +314,7 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
           <label class="f wide">имя <input id="p-name" type="text"></label>
           <label class="f chk">цвет <input id="p-color" type="color"></label>
           <label class="f chk">отверстие <input id="p-hole" type="checkbox"></label>
+          <label class="f chk" title="от детали останется только то, что попало внутрь этой фигуры">оставить общее <input id="p-keep" type="checkbox"></label>
           <label class="f chk">видимый <input id="p-vis" type="checkbox"></label>
         </div>
       </div>
@@ -354,6 +355,24 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
           <button class="sm" id="center" title="совместить с центром детали">Центрировать</button>
           <button class="sm" id="drop" title="опустить деталь на стол">На стол</button>
           <button class="sm" id="group" title="связать деталь: все касающиеся тела поедут вместе">Сгруппировать</button>
+        </div>
+        <div class="stack" style="margin-top:6px">
+          <div class="pair">
+            <button class="sm" id="mirror" title="отразить фигуру или всю группу">Зеркало</button>
+            <select id="mirror-ax" style="padding:2px 4px;font-size:12px">
+              <option value="x">по X</option>
+              <option value="y">по Y</option>
+            </select>
+          </div>
+          <div class="pair">
+            <button class="sm" id="array" title="размножить фигуру или группу">Массив</button>
+            <select id="arr-kind" style="padding:2px 4px;font-size:12px">
+              <option value="line">в ряд</option>
+              <option value="round">по кругу</option>
+            </select>
+          </div>
+          <label class="f">штук <input id="arr-n" type="number" min="2" max="64" step="1" value="4"></label>
+          <label class="f">шаг, мм <input id="arr-step" type="number" min="1" step="1" value="20"></label>
           <button class="sm" id="ungroup" title="разорвать связь с группой">Разгруппировать</button>
           <button class="sm" id="sink" title="опустить отверстие на 1 мм ниже дна">Утопить снизу</button>
         </div>

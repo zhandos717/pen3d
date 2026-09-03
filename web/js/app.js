@@ -134,7 +134,8 @@ function updateGhost(){
   if(ghost){ ghost.traverse(o => o.geometry?.dispose()); scene.remove(ghost); ghost = null; }
   const o = sel();
   if(!o || !o.hole || !o.vis || showResult) return;
-  const solids = objects.filter(x => x.vis && !x.hole && (x.plate || 0) === (o.plate || 0));
+  // keep-тела не материал, а маска обрезки — в расчёт погружения не берём
+  const solids = objects.filter(x => x.vis && !x.hole && x.mode !== 'keep' && (x.plate || 0) === (o.plate || 0));
   let res = null;
   try{ res = holeGhost(o, solids, (q, m) => objToMesh(q, m), GHOST); }
   catch(e){ return; }
@@ -330,6 +331,59 @@ $('dup').onclick = () => { const o = sel(); if(!o) return;
   const c = {...o, id: nextId++, name: o.name + ' копия', x: o.x + 10, y: o.y + 10, pts: o.pts && o.pts.map(p => p.slice())};
   objects.push(c); selId = c.id; sync(); say('дубль: ' + c.name); };
 
+// Копия тела: pts копируем поштучно, иначе обе фигуры будут делить один контур
+// и правка одной молча поменяет вторую.
+const copyOf = (o, extra) => ({...o, id: nextId++, pts: o.pts && o.pts.map(p => p.slice()), ...extra});
+
+// Зеркало. Отражаем координату и разворот; у эскиза переворачиваем сам контур,
+// иначе получится копия, а не зеркальная деталь.
+$('mirror').onclick = () => {
+  const o = sel(); if(!o) return say('выбери фигуру', 'err');
+  const ax = $('mirror-ax').value;                       // 'x' или 'y'
+  const part = o.grp ? objects.filter(x => x.grp === o.grp) : [o];
+  const c = ax === 'x'
+    ? (Math.min(...part.map(p => p.x - p.w/2)) + Math.max(...part.map(p => p.x + p.w/2))) / 2
+    : (Math.min(...part.map(p => p.y - p.d/2)) + Math.max(...part.map(p => p.y + p.d/2))) / 2;
+  push();
+  const grp = part.length > 1 ? 'g' + Date.now() : undefined;
+  const made = part.map(p => {
+    const q = copyOf(p, {grp});
+    if(ax === 'x'){ q.x = +(2*c - p.x).toFixed(2); q.rot = (360 - (p.rot || 0)) % 360; }
+    else          { q.y = +(2*c - p.y).toFixed(2); q.rot = (180 - (p.rot || 0) + 360) % 360; }
+    if(q.pts) q.pts = q.pts.map(([px, py]) => ax === 'x' ? [-px, py] : [px, -py]);
+    return q;
+  });
+  objects.push(...made); selId = made[0].id; sync();
+  say(`зеркало по ${ax === 'x' ? 'X' : 'Y'} · тел: ${made.length}`, 'ok');
+};
+
+// Массив. Линейный — n копий с шагом, круговой — n копий по окружности вокруг центра детали.
+$('array').onclick = () => {
+  const o = sel(); if(!o) return say('выбери фигуру', 'err');
+  const n = Math.max(2, Math.min(64, Math.round(+$('arr-n').value || 4)));
+  const step = +$('arr-step').value || 20;
+  const round = $('arr-kind').value === 'round';
+  const part = o.grp ? objects.filter(x => x.grp === o.grp) : [o];
+  push();
+  const made = [];
+  for(let i = 1; i < n; i++){
+    for(const p of part){
+      if(round){
+        const a = i * 360 / n, rad = a * Math.PI / 180;
+        const r = Math.hypot(p.x, p.y) || step;
+        const a0 = Math.atan2(p.y, p.x);
+        made.push(copyOf(p, {x: +(r * Math.cos(a0 + rad)).toFixed(2),
+                             y: +(r * Math.sin(a0 + rad)).toFixed(2),
+                             rot: +(((p.rot || 0) + a) % 360).toFixed(1)}));
+      }else{
+        made.push(copyOf(p, {x: +(p.x + step * i).toFixed(2)}));
+      }
+    }
+  }
+  objects.push(...made); sync();
+  say(`${round ? 'по кругу' : 'в ряд'}: добавлено тел ${made.length}`, 'ok');
+};
+
 function select(id){
   hudOff = false;
   selId = id;
@@ -373,11 +427,12 @@ document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
 const showTab = t => document.querySelector(`.tabs button[data-tab="${t}"]`).click();
 
 // ---------- свойства ----------
-const P = ['name','hole','vis','color','w','d','h','x','y','z','rot','rx','rz','sides','dia','pitch','shell','openTop'];
+const P = ['name','hole','keep','vis','color','w','d','h','x','y','z','rot','rx','rz','sides','dia','pitch','shell','openTop'];
 function fillProps(){
   const o = sel(); $('props').hidden = !o; $('noprops').hidden = !!o; if(!o) return;
   for(const k of P){ const el = $('p-' + k);
-    if(el.type === 'checkbox') el.checked = o[k]; else if(document.activeElement !== el) el.value = o[k]; }
+    if(k === 'keep') el.checked = o.mode === 'keep';
+    else if(el.type === 'checkbox') el.checked = o[k]; else if(document.activeElement !== el) el.value = o[k]; }
   $('p-sides-row').style.display = o.type === 'poly' ? '' : 'none';
   const th = o.type === 'thread';
   const hollow = ['box','cyl','poly'].includes(o.type) && !o.hole;
@@ -390,6 +445,7 @@ P.forEach(k => {
   const el = $('p-' + k);
   el.onchange = () => { const o = sel(); if(!o) return;
     let v = el.type === 'checkbox' ? el.checked : el.type === 'number' ? +el.value : el.value.trim();
+    if(k === 'keep'){ push(); o.mode = v ? 'keep' : undefined; sync(); return; }
     if(k === 'color'){ o.color = v; sync(); persist(); return; }
     if(k === 'sides') v = Math.max(3, Math.min(64, Math.round(v)));
     if(k === 'dia') v = Math.max(2, v);

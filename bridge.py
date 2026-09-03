@@ -790,6 +790,23 @@ def printer_status():
     }
 
 
+def send_command(serial, ip, code, payload):
+    """Публикуем через живое соединение статуса: принтер держит одну сессию."""
+    import paho.mqtt.client as mqtt
+    topic = f'device/{serial}/request'
+    live = PRINTER.get('client')
+    if live and live.is_connected():
+        live.publish(topic, json.dumps(payload), qos=1).wait_for_publish(10)
+        return
+    c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    c.username_pw_set('bblp', code)
+    c.tls_set(cert_reqs=ssl.CERT_NONE, tls_version=ssl.PROTOCOL_TLS_CLIENT)
+    c.tls_insecure_set(True)
+    c.connect(ip, 8883, 30); c.loop_start()
+    c.publish(topic, json.dumps(payload), qos=1).wait_for_publish(10)
+    time.sleep(1); c.loop_stop(); c.disconnect()
+
+
 def start_print_gcode(name, ip, code, serial):
     """A1 и другие P1-модели печатают прямой gcode: команда gcode_file и путь на карте."""
     import paho.mqtt.client as mqtt
@@ -926,6 +943,15 @@ class H(BaseHTTPRequestHandler):
             return self._send(500, {'error': f'{type(e).__name__}: {e}'})
         if self.path.rstrip('/').endswith('/ai'):
             return self.do_ai(json.loads(body))
+        if self.path.rstrip('/').endswith('/printer/clear-error'):
+            try:
+                c = cfg()
+                send_command(c['serial'], c['ip'], c['code'],
+                             {'print': {'sequence_id': str(int(time.time() * 1000)),
+                                        'command': 'clean_print_error'}})
+                return self._send(200, {'ok': True})
+            except Exception as e:
+                return self._send(500, {'error': f'{type(e).__name__}: {e}'})
         if self.path.rstrip('/').endswith('/run-file'):
             try:
                 c = cfg()

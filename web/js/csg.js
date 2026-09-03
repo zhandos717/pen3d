@@ -30,8 +30,13 @@ export function innerOf(o){
     z: o.z + s};
 }
 
+// Тело бывает трёх видов: обычное (складывается), отверстие (вычитается)
+// и «оставить общее» (keep) — от детали остаётся только то, что попало внутрь него.
+// Порядок обязателен: сложить, обрезать по keep, потом резать полости и отверстия,
+// иначе keep срежет уже прорезанные отверстия и они «зарастут».
 export function buildResult(objects, objToMesh, mat){
-  const solids = dedupe(objects.filter(o => o.vis && !o.hole));
+  const solids = dedupe(objects.filter(o => o.vis && !o.hole && o.mode !== 'keep'));
+  const keeps = dedupe(objects.filter(o => o.vis && !o.hole && o.mode === 'keep'));
   const cavities = solids.map(innerOf).filter(Boolean);
   const holes = dedupe(objects.filter(o => o.vis && o.hole)).map(o => ({...o,
     w: o.w + .002, d: o.d + .002, h: o.h + .002, z: Math.max(0, o.z - .001)}));
@@ -40,6 +45,7 @@ export function buildResult(objects, objToMesh, mat){
   const step = (o, op) => { const b = brushOf(o, objToMesh, mat), prev = acc; acc = csg.evaluate(acc, b, op);
     b.geometry.dispose(); prev.geometry.dispose(); };
   solids.slice(1).forEach(o => step(o, ADDITION));
+  keeps.forEach(o => step(o, INTERSECTION));              // оставляем только общую часть
   cavities.forEach(o => step(o, SUBTRACTION));            // полости режем до отверстий
   holes.forEach(o => step(o, SUBTRACTION));
   // у одиночного тела трансформ живёт в матрице, а не в вершинах — переносим в геометрию
