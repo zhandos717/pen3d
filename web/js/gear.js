@@ -51,3 +51,24 @@ export function gearSketch(z, m){
     size: +g.tip.toFixed(2), pitch: +g.pitch.toFixed(2), root: +g.root.toFixed(2),
   };
 }
+
+// Скруглённый прямоугольник: контур с дугами в углах.
+// Настоящего fillet по всем рёбрам в CSG нет, но скругление в плане закрывает
+// большинство случаев — корпуса, накладки, площадки, — и стоит один эскиз.
+export function roundedRect(w, d, r, seg = 14){   // 14 сегментов на угол — погрешность 0.2%, меньше слоя
+  const R = Math.max(0.1, Math.min(r, Math.min(w, d) / 2 - 0.01));
+  const x = w / 2 - R, y = d / 2 - R;
+  const pts = [];
+  // против часовой: правый-верх → левый-верх → левый-низ → правый-низ,
+  // каждая дуга продолжает предыдущую, иначе контур сам себя пересечёт
+  const corners = [[x, y, 0], [-x, y, Math.PI / 2], [-x, -y, Math.PI], [x, -y, 3 * Math.PI / 2]];
+  for(const [cx, cy, a0] of corners){
+    for(let i = 0; i <= seg; i++){
+      const a = a0 + (Math.PI / 2) * (i / seg);
+      pts.push([cx + R * Math.cos(a), cy + R * Math.sin(a)]);
+    }
+  }
+  const span = Math.max(w, d);
+  return {pts: pts.map(([px, py]) => [+(px / span).toFixed(5), +(py / span).toFixed(5)]),
+          size: span, w, d, r: R};
+}

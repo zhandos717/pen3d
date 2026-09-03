@@ -5,7 +5,7 @@ import { unitGeo } from './geometry.js';
 import { buildResult, holeGhost } from './csg.js';
 import { meshToStl } from './stl.js';
 import { PROMPT, PROVIDERS, sanitize } from './ai.js';
-import { gearSketch } from './gear.js';
+import { gearSketch, roundedRect } from './gear.js';
 import { t } from './i18n.js';
 
 const BED = 256;
@@ -1049,6 +1049,27 @@ $('gear').onclick = () => {
   add('sketch', {pts: g.pts, name: `Шестерня z${z} m${m}`, w: g.size, d: g.size, h: 6});
   showTab('props');
   say(`шестерня z${z} m${m} · Ø${g.size} мм · размер не меняй, иначе не зацепится`, 'ok');
+};
+
+// Скруглённая площадка. Полноценного fillet по всем рёбрам в CSG нет,
+// но скругление в плане закрывает большинство корпусов и накладок.
+function rrectInfo(){
+  const w = Math.max(4, +$('r-w').value || 60), d = Math.max(4, +$('r-d').value || 40);
+  const g = roundedRect(w, d, Math.max(.5, +$('r-r').value || 8));
+  $('rrect-hint').textContent = +$('r-r').value > Math.min(w, d) / 2
+    ? `радиус больше половины стороны — обрезан до ${g.r.toFixed(1)} мм`
+    : `${w}×${d} мм, углы R${g.r.toFixed(1)}`;
+  return {w, d, g};
+}
+['r-w', 'r-d', 'r-r'].forEach(id => $(id).oninput = rrectInfo);
+rrectInfo();
+
+$('rrect').onclick = () => {
+  const {w, d, g} = rrectInfo();
+  add('sketch', {pts: g.pts, name: `Площадка ${w}×${d} R${g.r.toFixed(1)}`,
+                 w: g.size, d: g.size, h: 5});
+  showTab('props');
+  say(`площадка ${w}×${d} мм со скруглением R${g.r.toFixed(1)}`, 'ok');
 };
 
 // ---------- библиотека эскизов ----------

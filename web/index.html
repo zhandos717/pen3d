@@ -296,6 +296,13 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
           <label class="f">модуль <input id="g-m" type="number" min="0.3" max="10" step="0.1" value="2"></label>
           <button id="gear">⚙ Поставить шестерню</button>
           <div class="hint" id="gear-hint"></div>
+          <div class="pair" style="margin-top:6px">
+            <label class="f">Ш <input id="r-w" type="number" min="4" step="1" value="60"></label>
+            <label class="f">Г <input id="r-d" type="number" min="4" step="1" value="40"></label>
+          </div>
+          <label class="f">радиус угла, мм <input id="r-r" type="number" min="0.5" step="0.5" value="8"></label>
+          <button id="rrect" title="прямоугольник со скруглёнными углами">◠ Скруглённая площадка</button>
+          <div class="hint" id="rrect-hint"></div>
         </div>
       </div>
     </div>
