@@ -659,7 +659,7 @@ addEventListener('keydown', e => {
 
 // ---------- экспорт ----------
 const printPlate = () => +$('plate-print').value;
-function stlText(){
+function stlBytes(){
   let m;
   const on = objects.filter(o => (o.plate || 0) === printPlate());
   if(!on.length) say(printPlate() ? 'стол агента пуст' : 'твой стол пуст', 'err');
@@ -670,7 +670,7 @@ function stlText(){
 }
 
 $('estimate').onclick = async e => {
-  const out = stlText(); if(!out) return;
+  const out = stlBytes(); if(!out) return;
   const btn = e.currentTarget, box = $('est');
   const done = busy(btn, t('считаем…')); say(t('слайсим, чтобы посчитать расход'));
   try{
@@ -691,12 +691,12 @@ $('estimate').onclick = async e => {
   done();
 };
 
-$('stl').onclick = () => { const out = stlText(); if(!out) return;
+$('stl').onclick = () => { const out = stlBytes(); if(!out) return;
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([out], {type:'model/stl'})); a.download = 'pen3d.stl'; a.click();
   say('STL сохранён', 'ok'); };
 async function toPrinter(path, btn, label){
-  const out = stlText(); if(!out) return;
+  const out = stlBytes(); if(!out) return;
   if(path === '/print' && !confirm('Запустить печать на A1 прямо сейчас?')) return;
   const done = busy(btn, t('слайсим…')); say('слайсим в Bambu Studio, ~20 сек');
   try{
