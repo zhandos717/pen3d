@@ -1364,6 +1364,17 @@ async function boot(){
   renderLib(); showTokens(); sync();
 }
 boot(); markPlates(); loop();
-window.__dbg = () => ({objects, selId, hist: hist.length, redo: redoStack.length, meshes: raw.children.length,
+// Копим задачи, из-за которых интерфейс замирал дольше 50 мс: зависания плавающие,
+// и без записи момент не поймать. Смотреть: window.__long
+window.__long = [];
+try{
+  new PerformanceObserver(list => {
+    for(const e of list.getEntries())
+      window.__long.push({мс: Math.round(e.duration), когда: new Date().toLocaleTimeString('ru')});
+    if(window.__long.length > 20) window.__long.splice(0, window.__long.length - 20);
+  }).observe({entryTypes: ['longtask']});
+}catch(e){}
+
+window.__dbg = () => ({objects, selId, долгиеЗадачи: window.__long.slice(-5), hist: hist.length, redo: redoStack.length, meshes: raw.children.length,
   result: !!resultMesh, plate: printPlate(),
   ghost: ghostDepth && {depth:+ghostDepth.size.y.toFixed(2), top:+ghostDepth.top.toFixed(2)}, cam: [+cam.position.x.toFixed(1), +orbit.target.x.toFixed(1)]});

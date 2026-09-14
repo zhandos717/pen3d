@@ -13,11 +13,16 @@ function brushOf(o, objToMesh, mat){
 function dedupe(list){
   const seen = new Set();
   return list.filter(o => {
-    const k = [o.type, o.w, o.d, o.h, o.x, o.y, o.z, o.rot, o.sides, o.dia, o.pitch].join('|');
+    // округляем: тела, различающиеся на тысячные, для CSG одинаковы,
+    // но дают совпадающие грани и вырожденный случай
+    const r = v => Math.round((+v || 0) * 100) / 100;
+    const k = [o.type, r(o.w), r(o.d), r(o.h), r(o.x), r(o.y), r(o.z), r(o.rot),
+               o.sides, r(o.dia), r(o.pitch), o.mode || ''].join('|');
     if(seen.has(k)) return false;
     seen.add(k); return true;
   });
 }
+
 // Полое тело: внутренняя копия, уменьшенная на толщину стенки, вычитается из своей же формы
 export function innerOf(o){
   const s = +o.shell || 0;
