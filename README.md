@@ -45,7 +45,7 @@ python3 -m venv .venv
 
 Open <http://127.0.0.1:8765>. Without a config you can still model and download STL — printing and AI need the file below.
 
-Sanity checks: `make check` runs both — slicing a test cube with the fastener templates, and exercising the database. `make help` lists every target.
+Sanity checks: `make check` runs all three — slicing a test cube with the fastener templates, exercising the database, and checking the translation dictionaries for idempotency (a non-idempotent entry sends the DOM observer into an endless loop). `make help` lists every target.
 
 ## Configuration — `~/.pen3d.json`
 

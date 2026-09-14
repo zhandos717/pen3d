@@ -613,7 +613,10 @@ export function t(s){
   if(!D || typeof s !== 'string' || !s.trim()) return s;
   const raw = s.trim();
   const exact = D[raw] ?? FLAT[raw.replace(/\s+/g, ' ')];
-  if(exact !== undefined) return s.replace(raw, exact);
+  // Перевод подставляем без его собственных пробелов: строка сохраняет свои.
+  // Иначе ключ ' мм' с переводом ' мм' добавлял пробел на каждом вызове, наблюдатель
+  // за DOM переводил результат снова — и строка росла, пока вкладка не умирала.
+  if(exact !== undefined) return s.replace(raw, exact.trim());
   for(const p of PREFIXES){
     if(raw.startsWith(p)) return s.replace(raw, D[p] + raw.slice(p.length));
   }

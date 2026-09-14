@@ -4,7 +4,7 @@ PIP  := $(PY) -m pip
 STAMP := $(VENV)/.deps-installed
 
 .DEFAULT_GOAL := help
-.PHONY: help venv run lan check check-slicer check-db examples vendor clean
+.PHONY: help venv run lan check check-slicer check-db check-i18n examples vendor clean
 
 help:            ## показать этот список
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sort | awk -F':.*## ' '{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -25,13 +25,16 @@ run: venv        ## запустить редактор на http://127.0.0.1:87
 lan: venv        ## то же, но слушать всю локальную сеть (без авторизации!)
 	$(PY) bridge.py --lan
 
-check: check-db check-slicer  ## прогнать все проверки
+check: check-db check-slicer check-i18n  ## прогнать все проверки
 
 check-db: venv   ## база: запись, чтение, удаление на временном файле
 	$(PY) db.py
 
 check-slicer: venv  ## слайсер: прогнать тестовый куб и шаблоны крепежа
 	$(PY) bridge.py --selfcheck
+
+check-i18n:      ## словарь переводов: перевод перевода не должен меняться
+	node web/js/i18n.test.mjs
 
 examples: venv   ## пересобрать примеры в examples/ и проверить их печатаемость
 	$(PY) examples/build.py --write
