@@ -274,6 +274,15 @@ function gizmoDone(){
   gizmoStart = null; sync();
 }
 
+// Blob-ссылку надо освобождать руками: браузер держит данные, пока жив URL,
+// и каждый экспорт оставлял в памяти сотни килобайт до перезагрузки вкладки.
+function download(blob, name){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);   // даём браузеру дописать файл
+}
+
 // ---------- сохранение ----------
 // sync() дёргается на каждое движение гизмо, поэтому пишем в базу не чаще раза в 400 мс
 let saveTimer = null;
@@ -285,9 +294,8 @@ function persist(){
   }, 400);
 }
 $('save').onclick = () => {
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([snapshot()], {type:'application/json'}));
-  a.download = 'project.pen3d.json'; a.click(); say('проект сохранён', 'ok');
+  download(new Blob([snapshot()], {type:'application/json'}), 'project.pen3d.json');
+  say('проект сохранён', 'ok');
 };
 $('open').onclick = () => $('file').click();
 $('file').onchange = async e => {
@@ -676,7 +684,9 @@ function stlBytes(){
   try{ m = buildResult(on, (o, b) => objToMesh({...o, plate:0}, b), MAT.result); }
   catch(e){ say('не удалось собрать: ' + e.message, 'err'); return null; }
   if(!m){ say('нет ни одного тела', 'err'); return null; }
-  return meshToStlAsync(m);
+  // меш собран только ради экспорта и в сцену не попадает — освобождаем сразу,
+  // иначе каждая выгрузка оставляет в памяти геометрию на тысячи треугольников
+  return meshToStlAsync(m).finally(() => m.geometry.dispose());
 }
 
 $('estimate').onclick = async e => {
@@ -707,8 +717,7 @@ $('stl').onclick = async e => {
   const out = await stlBytes();
   done();
   if(!out) return;
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([out], {type:'model/stl'})); a.download = 'pen3d.stl'; a.click();
+  download(new Blob([out], {type:'model/stl'}), 'pen3d.stl');
   say('STL сохранён', 'ok');
 };
 async function toPrinter(path, btn, label){
@@ -1137,9 +1146,8 @@ $('lib-add').onclick = () => {
     .catch(err => say(err.message, 'err'));
 };
 $('lib-export').onclick = () => {
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify(libGet())], {type:'application/json'}));
-  a.download = 'sketches.pen3d.json'; a.click(); say('библиотека выгружена', 'ok');
+  download(new Blob([JSON.stringify(libGet())], {type:'application/json'}), 'sketches.pen3d.json');
+  say('библиотека выгружена', 'ok');
 };
 $('lib-import').onclick = () => $('libfile').click();
 $('libfile').onchange = async e => {

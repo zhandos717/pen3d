@@ -9,8 +9,10 @@ let worker = null;
 // Тот же результат, но буфер собирается в фоновом потоке — интерфейс не замирает.
 // Координаты уходят копией: исходную геометрию сцены отдавать нельзя, она ещё нужна.
 export function meshToStlAsync(mesh){
-  const g = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry;
+  const indexed = !!mesh.geometry.index;
+  const g = indexed ? mesh.geometry.toNonIndexed() : mesh.geometry;
   const src = g.attributes.position.array;
+  if(indexed) g.dispose();              // временная развёрнутая копия, в сцену не идёт
   if(!worker){
     try{ worker = new Worker('/js/stl-worker.js'); }
     catch(e){ return Promise.resolve(meshToStl(mesh)); }
