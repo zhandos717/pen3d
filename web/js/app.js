@@ -210,12 +210,22 @@ function sync(){
   const s = sel();
   if(s && s.vis && !showResult && !sketching) gizmo.attach(meshOf(s.id)); else gizmo.detach();
   renderList(); fillProps(); updateDims(); updateGhost();
-  if(showResult) rebuild();
+  if(showResult) rebuildSoon();
   persist();
 }
 
 // ---------- CSG результат ----------
+// Пересчёт булевой геометрии стоит сотни миллисекунд, а sync() вызывается на каждое
+// движение мыши — поэтому результат обновляем по паузе, а во время перетаскивания
+// вообще не трогаем: на экране остаётся прошлый, он догонит после отпускания.
+let rebuildTimer = null;
+function rebuildSoon(){
+  clearTimeout(rebuildTimer);
+  rebuildTimer = setTimeout(() => { if(showResult && !gizmo.dragging) rebuild(); }, 250);
+}
+
 function rebuild(){
+  clearTimeout(rebuildTimer);
   if(resultMesh){ kill(resultMesh); resultMesh = null; }
   try{ resultMesh = buildResult(objects.filter(o => (o.plate || 0) === printPlate()),
                                 (o,b) => objToMesh({...o, plate: printPlate()}, b), MAT.result); }
