@@ -68,7 +68,8 @@ db.py                  SQLite: scene, sketch library, AI log, token counter
 pen3d.db               database, created on first run (not in git)
 web/
   index.html           editor UI
-  js/                  app, geometry, csg, stl, ai
+  js/                  app, geometry, csg, stl, gear, ai, i18n
+  js/stl-worker.js     сборка STL в фоновом потоке
   icon.svg
 ```
 

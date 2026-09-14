@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { unitGeo } from './geometry.js';
 import { buildResult, holeGhost } from './csg.js';
-import { meshToStl } from './stl.js';
+import { meshToStlAsync } from './stl.js';
 import { PROMPT, PROVIDERS, sanitize } from './ai.js';
 import { gearSketch, roundedRect } from './gear.js';
 import { t } from './i18n.js';
@@ -666,13 +666,14 @@ function stlBytes(){
   try{ m = buildResult(on, (o, b) => objToMesh({...o, plate:0}, b), MAT.result); }
   catch(e){ say('не удалось собрать: ' + e.message, 'err'); return null; }
   if(!m){ say('нет ни одного тела', 'err'); return null; }
-  return meshToStl(m);
+  return meshToStlAsync(m);
 }
 
 $('estimate').onclick = async e => {
-  const out = stlBytes(); if(!out) return;
   const btn = e.currentTarget, box = $('est');
-  const done = busy(btn, t('считаем…')); say(t('слайсим, чтобы посчитать расход'));
+  const done = busy(btn, t('считаем…')); say(t('готовлю модель'));
+  const out = await stlBytes(); if(!out) return done();
+  say(t('слайсим, чтобы посчитать расход'));
   try{
     const r = await fetch('/estimate', {method:'POST', body: out, headers:{
       'x-support': $('sup').checked ? '1' : '0', 'x-infill': $('infill').value,
@@ -691,14 +692,19 @@ $('estimate').onclick = async e => {
   done();
 };
 
-$('stl').onclick = () => { const out = stlBytes(); if(!out) return;
+$('stl').onclick = async e => {
+  const done = busy(e.currentTarget, t('готовлю…'));
+  const out = await stlBytes();
+  done();
+  if(!out) return;
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([out], {type:'model/stl'})); a.download = 'pen3d.stl'; a.click();
-  say('STL сохранён', 'ok'); };
+  say('STL сохранён', 'ok');
+};
 async function toPrinter(path, btn, label){
-  const out = stlBytes(); if(!out) return;
   if(path === '/print' && !confirm('Запустить печать на A1 прямо сейчас?')) return;
   const done = busy(btn, t('слайсим…')); say('слайсим в Bambu Studio, ~20 сек');
+  const out = await stlBytes(); if(!out) return done();
   try{
     const r = await fetch(path, {method:'POST', body: out, headers:{
       'x-support': $('sup').checked ? '1' : '0',

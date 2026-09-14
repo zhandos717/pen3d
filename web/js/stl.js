@@ -3,6 +3,30 @@
 // STL пишем двоичным: у детали на 8 тысяч треугольников текстовый вариант — это
 // полтора мегабайта и 55 тысяч строк, которые собирались склейкой в цикле
 // и подвешивали вкладку на секунды. Двоичный втрое меньше и пишется в готовый буфер.
+
+let worker = null;
+
+// Тот же результат, но буфер собирается в фоновом потоке — интерфейс не замирает.
+// Координаты уходят копией: исходную геометрию сцены отдавать нельзя, она ещё нужна.
+export function meshToStlAsync(mesh){
+  const g = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry;
+  const src = g.attributes.position.array;
+  if(!worker){
+    try{ worker = new Worker('/js/stl-worker.js'); }
+    catch(e){ return Promise.resolve(meshToStl(mesh)); }
+  }
+  const copy = new Float32Array(src);
+  return new Promise((resolve, reject) => {
+    const done = e => { cleanup(); resolve(new Uint8Array(e.data)); };
+    const failed = e => { cleanup(); reject(new Error('воркер не справился: ' + e.message)); };
+    const cleanup = () => { worker.removeEventListener('message', done);
+                            worker.removeEventListener('error', failed); };
+    worker.addEventListener('message', done);
+    worker.addEventListener('error', failed);
+    worker.postMessage(copy, [copy.buffer]);
+  });
+}
+
 export function meshToStl(mesh){
   const g = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry;
   const p = g.attributes.position.array;
