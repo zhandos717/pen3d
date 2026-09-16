@@ -28,7 +28,9 @@ def pair_code():
             return c['code']
     import secrets
     code = secrets.token_hex(16)   # 128 бит — код это пароль к печати, копипастой, не руками
-    with open(AGENT_CFG, 'w') as f:
+    # файл с паролем — только владельцу; дефолтный umask (обычно 644) читался бы кем угодно в системе
+    fd = os.open(AGENT_CFG, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as f:
         json.dump({'code': code}, f)
     return code
 
