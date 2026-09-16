@@ -1510,6 +1510,67 @@ function updateGridLOD(){
   }
 }
 
+// ---------- линейки по краям (как в Figma, но привязаны к точке фокуса камеры,
+// а не к мировым координатам — в перспективе единого масштаба на весь экран не бывает) ----------
+const rulerX = $('ruler-x'), rulerY = $('ruler-y');
+const rxCtx = rulerX.getContext('2d'), ryCtx = rulerY.getContext('2d');
+const RULER_BG = getComputedStyle(document.documentElement).getPropertyValue('--panel').trim() || '#16181d';
+const RULER_DIM = getComputedStyle(document.documentElement).getPropertyValue('--dim').trim() || '#8a909b';
+const NICE_STEPS = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000];
+const niceStep = (pxPerUnit, targetPx) => NICE_STEPS.find(s => s * pxPerUnit >= targetPx) || 1000;
+
+function drawRulers(){
+  const W = view.clientWidth, H = view.clientHeight;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  if(rulerX.width !== Math.round(W*dpr)){ rulerX.width = W*dpr; rulerX.height = 20*dpr;
+    rulerX.style.width = W+'px'; rulerX.style.height = '20px'; }
+  if(rulerY.height !== Math.round(H*dpr)){ rulerY.width = 22*dpr; rulerY.height = H*dpr;
+    rulerY.style.width = '22px'; rulerY.style.height = H+'px'; }
+  rxCtx.setTransform(dpr,0,0,dpr,0,0); ryCtx.setTransform(dpr,0,0,dpr,0,0);
+
+  // локальный масштаб у точки, куда сейчас смотрит камера: сдвиг на 10мм вдоль
+  // экранных «право» и «верх» камеры, спроецированный обратно в пиксели
+  const right = new THREE.Vector3(), up = new THREE.Vector3(), fwd = new THREE.Vector3();
+  cam.matrixWorld.extractBasis(right, up, fwd);
+  const p0 = orbit.target;
+  const s0 = p0.clone().project(cam);
+  const sx = p0.clone().addScaledVector(right, 10).project(cam);
+  const sy = p0.clone().addScaledVector(up, 10).project(cam);
+  const pxPerMmX = Math.abs((sx.x - s0.x) * .5 * W) / 10;
+  const pxPerMmY = Math.abs((sy.y - s0.y) * .5 * H) / 10;
+  const cx = (s0.x * .5 + .5) * W, cy = (-s0.y * .5 + .5) * H;
+
+  rxCtx.clearRect(0, 0, W, 20); rxCtx.fillStyle = RULER_BG; rxCtx.fillRect(0, 0, W, 20);
+  ryCtx.clearRect(0, 0, 22, H); ryCtx.fillStyle = RULER_BG; ryCtx.fillRect(0, 0, 22, H);
+  rxCtx.strokeStyle = ryCtx.strokeStyle = RULER_DIM;
+  rxCtx.fillStyle = ryCtx.fillStyle = RULER_DIM;
+  rxCtx.font = ryCtx.font = '10px ui-monospace,monospace';
+
+  if(pxPerMmX > .3){
+    const step = niceStep(pxPerMmX, 55), stepPx = step * pxPerMmX;
+    const n0 = Math.floor(-cx / stepPx), n1 = Math.ceil((W - cx) / stepPx);
+    rxCtx.beginPath();
+    for(let n = n0; n <= n1; n++){
+      const x = cx + n * stepPx, major = n % 5 === 0;
+      rxCtx.moveTo(x, 20); rxCtx.lineTo(x, major ? 9 : 14);
+      if(major) rxCtx.fillText(String(Math.round(n * step)), x + 2, 9);
+    }
+    rxCtx.stroke();
+  }
+  if(pxPerMmY > .3){
+    const step = niceStep(pxPerMmY, 55), stepPx = step * pxPerMmY;
+    const n0 = Math.floor(-cy / stepPx), n1 = Math.ceil((H - cy) / stepPx);
+    ryCtx.beginPath();
+    for(let n = n0; n <= n1; n++){
+      const y = cy - n * stepPx, major = n % 5 === 0;
+      ryCtx.moveTo(22, y); ryCtx.lineTo(major ? 8 : 13, y);
+      if(major){ ryCtx.save(); ryCtx.translate(11, y - 2); ryCtx.rotate(-Math.PI/2);
+        ryCtx.fillText(String(Math.round(n * step)), 0, 0); ryCtx.restore(); }
+    }
+    ryCtx.stroke();
+  }
+}
+
 // ---------- цикл ----------
 function loop(){
   const w = view.clientWidth, h = view.clientHeight, dpr = renderer.getPixelRatio();
@@ -1518,7 +1579,7 @@ function loop(){
     renderer.setSize(w, h, false); cam.aspect = w/h; cam.updateProjectionMatrix(); }
   requestAnimationFrame(loop);
   stepFly(); stepPulse(); orbit.update(); updateGridLOD(); renderer.render(scene, cam);
-  try{ drawLabels(); }catch(e){ window.__lastErr = e.message + ' @ ' + (e.stack||'').split('\n')[1]; }
+  try{ drawLabels(); drawRulers(); }catch(e){ window.__lastErr = e.message + ' @ ' + (e.stack||'').split('\n')[1]; }
 }
 // всё состояние приезжает из базы одним запросом
 // Разовый переезд: что лежало в localStorage до появления базы, заливаем в базу.

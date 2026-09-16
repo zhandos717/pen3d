@@ -80,13 +80,15 @@ code{font:11px ui-monospace,monospace;color:var(--dim)}
 
 #stage{flex:1;position:relative;min-width:0}
 #view{width:100%;height:100%;display:block;background:#111318}
-#stage .cap{position:absolute;bottom:10px;left:12px;color:var(--dim);pointer-events:none;font-variant-numeric:tabular-nums}
+#stage .cap{position:absolute;bottom:30px;left:34px;color:var(--dim);pointer-events:none;font-variant-numeric:tabular-nums}
 #stage .views{position:absolute;top:10px;right:10px;display:flex;gap:4px}
-#pan-bar{position:absolute;left:50%;transform:translateX(-50%);bottom:10px;width:220px;height:14px;
+#pan-bar{position:absolute;left:calc(50% + 11px);transform:translateX(-50%);bottom:30px;width:220px;height:14px;
   background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:7px;cursor:ew-resize;touch-action:none}
 #pan-bar i{position:absolute;top:1px;left:50%;transform:translateX(-50%);width:36px;height:10px;
   border-radius:5px;background:var(--dim);transition:background .1s}
 #pan-bar:hover i, #pan-bar.on i{background:var(--ink)}
+#ruler-x{position:absolute;left:22px;right:0;bottom:0;height:20px;z-index:2}
+#ruler-y{position:absolute;top:0;bottom:20px;left:0;width:22px;z-index:2}
 #hud{position:absolute;display:flex;align-items:center;gap:2px;padding:4px;
   transform:translate(-50%,-100%);z-index:3;pointer-events:none;
   background:rgba(22,24,29,.62);border:1px solid rgba(255,255,255,.1);border-radius:10px;
@@ -293,6 +295,8 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
     <button id="toggle-right" class="panel-toggle" title="Скрыть/показать правую панель">›</button>
     <div id="pan-bar" title="Тяни — камера едет по плоскости стола"><i></i></div>
     <canvas id="view"></canvas>
+    <canvas id="ruler-x"></canvas>
+    <canvas id="ruler-y"></canvas>
     <div id="labels"></div>
     <div id="hud" hidden>
       <button data-mode="translate" title="Двигать по осям (G)"><svg viewBox="0 0 24 24"><path d="M12 2v20M2 12h20"/><path d="M12 2l-3.2 3.2M12 2l3.2 3.2M12 22l-3.2-3.2M12 22l3.2-3.2M2 12l3.2-3.2M2 12l3.2 3.2M22 12l-3.2-3.2M22 12l3.2 3.2"/></svg><i>двигать</i></button>
