@@ -6,7 +6,14 @@
 import json, os, sqlite3, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DB = os.path.join(HERE, 'pen3d.db')
+DB = os.path.join(HERE, 'usta.db')
+_OLD_DB = os.path.join(HERE, 'pen3d.db')
+# миграция со старого имени проекта: если новой базы ещё нет, а старая есть — переносим её.
+# -wal/-shm — несброшенные страницы WAL-журнала, без них потерялись бы последние записи
+if not os.path.exists(DB) and os.path.exists(_OLD_DB):
+    for suffix in ('', '-wal', '-shm'):
+        if os.path.exists(_OLD_DB + suffix):
+            os.rename(_OLD_DB + suffix, DB + suffix)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects(

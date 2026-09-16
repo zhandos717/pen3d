@@ -1,4 +1,4 @@
-# pen3d
+# usta
 
 Browser-based 3D editor that slices and prints to a **Bambu Lab A1 over your LAN** — no Bambu Cloud, no account, no vendor app. Model a part, hit print, watch it come out.
 
@@ -47,7 +47,9 @@ Open <http://127.0.0.1:8765>. Without a config you can still model and download 
 
 Sanity checks: `make check` runs all three — slicing a test cube with the fastener templates, exercising the database, and checking the translation dictionaries for idempotency (a non-idempotent entry sends the DOM observer into an endless loop). `make help` lists every target.
 
-## Configuration — `~/.pen3d.json`
+## Configuration — `~/.usta.json`
+
+*(config path and database filename kept from the project's old name, `pen3d`, so existing setups keep working)*
 
 ```json
 {
@@ -65,7 +67,7 @@ Sanity checks: `make check` runs all three — slicing a test cube with the fast
 ```
 bridge.py              server: serves web/, slices STL, prints, runs the agent
 db.py                  SQLite: scene, sketch library, AI log, token counter
-pen3d.db               database, created on first run (not in git)
+usta.db                database, created on first run (not in git; renamed from pen3d.db on first run if found)
 web/
   index.html           editor UI
   js/                  app, geometry, csg, stl, gear, ai, i18n

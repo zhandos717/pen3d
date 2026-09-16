@@ -9,7 +9,7 @@ self.onmessage = e => {
   const tris = p.length / 9;
   const buf = new ArrayBuffer(84 + tris * 50);
   const view = new DataView(buf);
-  new Uint8Array(buf, 0, 80).set(new TextEncoder().encode('pen3d'));
+  new Uint8Array(buf, 0, 80).set(new TextEncoder().encode('usta'));
   view.setUint32(80, tris, true);
 
   let at = 84;

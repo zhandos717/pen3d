@@ -10,3 +10,7 @@ out.3mf
 pen3d.db
 pen3d.db-shm
 pen3d.db-wal
+usta.db
+usta.db-shm
+usta.db-wal
+node_modules/

@@ -4,7 +4,7 @@ PIP  := $(PY) -m pip
 STAMP := $(VENV)/.deps-installed
 
 .DEFAULT_GOAL := help
-.PHONY: help venv run lan check check-slicer check-db check-i18n examples vendor clean
+.PHONY: help venv run lan check check-slicer check-db check-i18n examples vendor clean build-web
 
 help:            ## показать этот список
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sort | awk -F':.*## ' '{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -47,6 +47,10 @@ vendor:          ## перекачать библиотеки в web/vendor по
 	done < .sources
 	@echo "файлов в vendor: $$(find web/vendor -name '*.js' | wc -l | tr -d ' ')"
 
-clean:           ## удалить окружение и кэш питона (база pen3d.db остаётся)
+build-web:       ## пересобрать Solid-куски (web/solid/*) в web/js/*-solid.js — нужен Node, только для разработки
+	@cd web && npm install --silent && npm run build
+	@echo "собрано — результат закоммитить, make run сам Node не трогает"
+
+clean:           ## удалить окружение и кэш питона (база usta.db остаётся)
 	rm -rf $(VENV) __pycache__ .pytest_cache
 	find . -name '*.pyc' -delete
