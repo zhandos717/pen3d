@@ -102,6 +102,31 @@ orbit.mouseButtons = {LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT
 
 orbit.addEventListener('start', () => fly = null);
 
+// камера переживает reload: сохраняем не по событию (их источников много — орбита,
+// колесо, pan-бар, кнопки видов, F), а по факту изменения раз в кадр — дёшево и не
+// зависит от того, каким жестом камеру подвинули
+let camSaveAt = 0, camSavedPos = null, camSavedTarget = null;
+function saveCam(){
+  if(camSavedPos && cam.position.distanceToSquared(camSavedPos) < 1e-6 &&
+     orbit.target.distanceToSquared(camSavedTarget) < 1e-6) return;   // не сдвинулась — нечего писать
+  const now = performance.now();
+  if(now - camSaveAt < 400) return;
+  camSaveAt = now;
+  camSavedPos = cam.position.clone(); camSavedTarget = orbit.target.clone();
+  try{
+    localStorage.cam = JSON.stringify({
+      p: [cam.position.x, cam.position.y, cam.position.z],
+      t: [orbit.target.x, orbit.target.y, orbit.target.z],
+    });
+  }catch(e){}
+}
+function restoreCam(){
+  try{
+    const c = JSON.parse(localStorage.cam || 'null'); if(!c) return;
+    cam.position.set(...c.p); orbit.target.set(...c.t); cam.lookAt(orbit.target); orbit.update();
+  }catch(e){}
+}
+
 // бегунок снизу — тот же сдвиг, что у ПКМ-панорамы, но для тех, у кого нет правой кнопки/удобного жеста
 {
   const bar = $('pan-bar'), thumb = bar.querySelector('i');
@@ -1596,7 +1621,7 @@ function loop(){
   if(view.width !== Math.round(w*dpr) || view.height !== Math.round(h*dpr)){
     renderer.setSize(w, h, false); cam.aspect = w/h; cam.updateProjectionMatrix(); }
   requestAnimationFrame(loop);
-  stepFly(); stepPulse(); orbit.update(); updateGridLOD(); renderer.render(scene, cam);
+  stepFly(); stepPulse(); orbit.update(); updateGridLOD(); saveCam(); renderer.render(scene, cam);
   try{ drawLabels(); drawRulers(); }catch(e){ window.__lastErr = e.message + ' @ ' + (e.stack||'').split('\n')[1]; }
 }
 // всё состояние приезжает из базы одним запросом
@@ -1635,7 +1660,7 @@ async function boot(){
   }catch(e){ say('база недоступна, работаем без сохранения: ' + e.message, 'err'); }
   renderLib(); showTokens(); sync();
 }
-boot(); markPlates(); loop();
+restoreCam(); boot(); markPlates(); loop();
 // Копим задачи, из-за которых интерфейс замирал дольше 50 мс: зависания плавающие,
 // и без записи момент не поймать. Смотреть: window.__long
 window.__long = [];
