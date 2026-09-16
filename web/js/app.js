@@ -38,13 +38,15 @@ function makePlate(offset, tint){
   b.rotation.x = -Math.PI/2; b.position.y = -0.05; g.add(b);
   const grid = new THREE.GridHelper(BED, BED/10, 0x3a4150, 0x262b35); g.add(grid);
   const g5 = new THREE.GridHelper(BED, BED/50, 0x4a5262, 0x4a5262); g5.position.y = .02; g.add(g5);
+  // деления по 1мм — включаются только при сильном приближении, иначе на весь стол это муар
+  const g1 = new THREE.GridHelper(BED, BED, 0x565f70, 0x565f70); g1.position.y = .03; g1.visible = false; g.add(g1);
   const h = BED/2, y = .06;
   const edge = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(
     [[-h,y,-h],[h,y,-h],[h,y,h],[-h,y,h]].map(q => new THREE.Vector3(...q))),
     new THREE.LineBasicMaterial({color:0x3fae8c}));
   g.add(edge);
   scene.add(g);
-  return {group:g, plate:b, grid, edge, tint};
+  return {group:g, plate:b, grid, g5, g1, edge, tint};
 }
 const plates = [makePlate(0, 0x1c2028), makePlate(PLATE_GAP, 0x1a2431)];
 
@@ -1498,6 +1500,16 @@ function drawLabels(){
   spread();
 }
 
+// сетка густеет по мере приближения камеры — на весь стол частые деления были бы
+// муаром, а мелкую деталь без них не разметить. Так же ведут себя Blender/Fusion.
+function updateGridLOD(){
+  const dist = cam.position.distanceTo(orbit.target);
+  for(const p of plates){
+    p.g5.visible = dist < 120;
+    p.g1.visible = dist < 30;
+  }
+}
+
 // ---------- цикл ----------
 function loop(){
   const w = view.clientWidth, h = view.clientHeight, dpr = renderer.getPixelRatio();
@@ -1505,7 +1517,7 @@ function loop(){
   if(view.width !== Math.round(w*dpr) || view.height !== Math.round(h*dpr)){
     renderer.setSize(w, h, false); cam.aspect = w/h; cam.updateProjectionMatrix(); }
   requestAnimationFrame(loop);
-  stepFly(); stepPulse(); orbit.update(); renderer.render(scene, cam);
+  stepFly(); stepPulse(); orbit.update(); updateGridLOD(); renderer.render(scene, cam);
   try{ drawLabels(); }catch(e){ window.__lastErr = e.message + ' @ ' + (e.stack||'').split('\n')[1]; }
 }
 // всё состояние приезжает из базы одним запросом
