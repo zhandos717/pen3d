@@ -3,7 +3,7 @@ import * as THREE from 'three';
 // Винтовая поверхность: радиус зависит от z и угла, торцы закрыты — сетка водонепроницаемая.
 export function threadGeo(o){
   const R = o.dia/2, p = o.pitch, H = o.h, depth = p*0.55;
-  const NA = 64, NZ = Math.max(8, Math.round(H/p*16));
+  const NA = 64, NZ = Math.min(2000, Math.max(8, Math.round(H/p*16)));
   const pos = [], idx = [];
   const rAt = (z, a) => {
     const u = ((z - a/(Math.PI*2)*p) % p + p) % p / p;   // положение внутри витка
@@ -69,7 +69,17 @@ export function wedgeGeo(){
   return g;
 }
 
+// Импортированный STL: точки уже нормализованы к [-0.5,0.5] на импорте (см. stl-import.js),
+// дальше он просто BufferGeometry без пересчёта — тяжёлая модель не парсится на каждый sync()
+export function stlUnitGeo(pts3){
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pts3, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
 export function unitGeo(o){
+  if(o.type === 'stl') return stlUnitGeo(o.pts3);
   if(o.type === 'thread') return threadGeo(o);
   if(o.type === 'box') return new THREE.BoxGeometry(1,1,1);
   if(o.type === 'sphere') return new THREE.SphereGeometry(.5, 40, 24);

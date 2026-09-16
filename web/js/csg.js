@@ -5,7 +5,16 @@ import { unitGeo } from './geometry.js';
 const csg = new Evaluator(); csg.attributes = ['position', 'normal'];
 function brushOf(o, objToMesh, mat){
   const b = new Brush(unitGeo(o), mat);
-  objToMesh(o, b); b.visible = true; b.updateMatrixWorld();
+  objToMesh(o, b);
+  // у двух тел с совпадающей гранью (напр. цилиндры одного диаметра встык) грань
+  // выходит идеально копланарной, и evaluate зависает в бесконечном цикле. Сдвиг
+  // тела в сторону иногда вместо стыка даёт микрощель — на срезе появляются рваные
+  // грани; одинаковое раздутие для обеих тоже не спасает — при равных габаритах
+  // радиусы остаются равны друг другу. Раздутие разное по величине (зависит от id),
+  // но всегда только наружу — гарантирует нахлёст без щели и различие между
+  // одинаковыми по размеру телами
+  b.scale.multiplyScalar(1 + 1e-5);
+  b.visible = true; b.updateMatrixWorld();
   return b;
 }
 // Совпадающие грани — известный вырожденный случай CSG: дубли выкидываем,
@@ -60,6 +69,7 @@ export function buildResult(objects, objToMesh, mat){
 
 // Насколько отверстие погружено в тело: пересечение показываем как «призрак»
 export function holeGhost(hole, solids, objToMesh, mat){
+  solids = dedupe(solids);
   if(!solids.length) return null;
   let body = brushOf(solids[0], objToMesh, mat);
   for(const s of solids.slice(1)) body = csg.evaluate(body, brushOf(s, objToMesh, mat), ADDITION);
