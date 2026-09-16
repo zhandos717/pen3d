@@ -647,6 +647,22 @@ $('drop').onclick = () => {
   push(); o.z = +Math.max(0, o.z - under).toFixed(2); sync(); say('посажена на стол');
 };
 
+// два тела одного сечения (тот же X/Y-центр и Ш/Г), уложенные впритык или внахлёст по Z —
+// грани совпадают в глубину: на экране z-fighting, а при сборке «Результата» риск зависа CSG
+function coplanarWarning(){
+  const vis = objects.filter(o => o.vis && !o.hole && (o.plate || 0) === printPlate());
+  for(let i = 0; i < vis.length; i++) for(let j = i + 1; j < vis.length; j++){
+    const a = vis[i], b = vis[j];
+    if(Math.abs(a.x - b.x) > .05 || Math.abs(a.y - b.y) > .05) continue;
+    if(Math.abs(a.w - b.w) > .05 || Math.abs(a.d - b.d) > .05) continue;
+    const touch = Math.abs(a.z - (b.z + b.h)) < .05 || Math.abs(b.z - (a.z + a.h)) < .05;
+    const overlap = a.z < b.z + b.h - .05 && b.z < a.z + a.h - .05;
+    if(touch || overlap)
+      return ` · «${a.name}» и «${b.name}» одного сечения впритык по Z — разведи по высоте, иначе мерцание/зависание`;
+  }
+  return '';
+}
+
 function updateDims(){
   const vis = objects.filter(o => o.vis && !o.hole && (o.plate || 0) === printPlate());
   if(!vis.length){ $('dims').textContent = ''; return; }
@@ -655,11 +671,11 @@ function updateDims(){
   const s = new THREE.Vector3(); box.getSize(s);
   const over = s.x > BED || s.z > BED || s.y > BED;
   const sunk = box.min.y < -0.2;
-  const warn = shellWarning();
+  const warn = shellWarning(), coplanar = coplanarWarning();
   $('dims').textContent = `${s.x.toFixed(1)} × ${s.z.toFixed(1)} × ${s.y.toFixed(1)}`
     + t(' мм · стол A1 256×256×256')
-    + (over ? t(' · НЕ ВЛЕЗАЕТ') : '') + (sunk ? t(' · ниже стола') : '') + warn;
-  $('dims').style.color = over || sunk || warn ? 'var(--danger)' : '';
+    + (over ? t(' · НЕ ВЛЕЗАЕТ') : '') + (sunk ? t(' · ниже стола') : '') + warn + coplanar;
+  $('dims').style.color = over || sunk || warn || coplanar ? 'var(--danger)' : '';
 }
 
 // ---------- гизмо / выбор ----------
