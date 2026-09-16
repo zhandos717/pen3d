@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { unitGeo } from './geometry.js';
+import { parseStl } from './stl-import.js';
 import { buildResult, holeGhost } from './csg.js';
 import { meshToStlAsync } from './stl.js';
 import { PROMPT, PROVIDERS, sanitize } from './ai.js';
@@ -40,7 +41,7 @@ function makePlate(offset, tint){
   const h = BED/2, y = .06;
   const edge = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(
     [[-h,y,-h],[h,y,-h],[h,y,h],[-h,y,h]].map(q => new THREE.Vector3(...q))),
-    new THREE.LineBasicMaterial({color:0x2dd4a7}));
+    new THREE.LineBasicMaterial({color:0x3fae8c}));
   g.add(edge);
   scene.add(g);
   return {group:g, plate:b, grid, edge, tint};
@@ -75,6 +76,13 @@ function plateTemp(){
   return bedNow ?? PLATE_TEMP[$('bed')?.value] ?? 60;
 }
 
+// второй стол — только пока агент что-то на нём держит, не загромождает выбор пластины без надобности
+function updatePlateOption(){
+  const has = agentBusy || objects.some(o => o.plate);
+  $('plate-agent-opt').hidden = !has;
+  if(!has && printPlate() === 1) $('plate-print').value = '0';
+}
+
 function markPlates(){
   const active = printPlate();
   const temp = plateTemp();
@@ -91,6 +99,35 @@ orbit.enableDamping = true; orbit.dampingFactor = .12; orbit.maxPolarAngle = Mat
 orbit.mouseButtons = {LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN};
 
 orbit.addEventListener('start', () => fly = null);
+
+// бегунок снизу — тот же сдвиг, что у ПКМ-панорамы, но для тех, у кого нет правой кнопки/удобного жеста
+{
+  const bar = $('pan-bar'), thumb = bar.querySelector('i');
+  const right = new THREE.Vector3();
+  let dragging = false, lastX = 0;
+  const step = () => {
+    if(!dragging) return;
+    right.setFromMatrixColumn(cam.matrix, 0);         // локальный "вправо" камеры, проецируем на плоскость стола
+    const d = (thumbX / 60) * (cam.position.distanceTo(orbit.target) * .02 + .3);
+    const v = right.multiplyScalar(d);
+    cam.position.add(v); orbit.target.add(v);
+    requestAnimationFrame(step);
+  };
+  let thumbX = 0;
+  bar.addEventListener('pointerdown', e => {
+    dragging = true; lastX = e.clientX; bar.classList.add('on'); bar.setPointerCapture(e.pointerId);
+    fly = null; step();
+  });
+  bar.addEventListener('pointermove', e => {
+    if(!dragging) return;
+    thumbX = Math.max(-70, Math.min(70, thumbX + (e.clientX - lastX)));
+    lastX = e.clientX;
+    thumb.style.transform = `translateX(calc(-50% + ${thumbX}px))`;
+  });
+  const stop = () => { dragging = false; thumbX = 0; thumb.style.transform = 'translateX(-50%)'; bar.classList.remove('on'); };
+  bar.addEventListener('pointerup', stop);
+  bar.addEventListener('pointercancel', stop);
+}
 
 const gizmo = new TransformControls(cam, view);
 gizmo.setTranslationSnap(1); gizmo.setRotationSnap(THREE.MathUtils.degToRad(15)); gizmo.setScaleSnap(.05);
@@ -113,11 +150,13 @@ gizmo.addEventListener('objectChange', () => {
 });
 
 const raw = new THREE.Group(); scene.add(raw);
+// тёмная обводка на каждом теле — иначе однотонные тела впритык сливаются в одно пятно
+const EDGE_MAT = new THREE.LineBasicMaterial({color:0x0a0e12, transparent:true, opacity:.55});
 let resultMesh = null, showResult = false;
 
 const matCache = new Map();
 function solidMat(color){
-  const c = color || '#2dd4a7';
+  const c = color || '#3fae8c';
   if(!matCache.has(c)) matCache.set(c, new THREE.MeshStandardMaterial({color:c, roughness:.5, metalness:.05}));
   return matCache.get(c);
 }
@@ -156,7 +195,7 @@ function updateGhost(){
 let ghostDepth = null;
 
 const MAT = {
-  solid: new THREE.MeshStandardMaterial({color:0x2dd4a7, roughness:.5, metalness:.05}),
+  solid: new THREE.MeshStandardMaterial({color:0x3fae8c, roughness:.5, metalness:.05}),
   hole:  new THREE.MeshStandardMaterial({color:0xd0455f, roughness:.6, transparent:true, opacity:.45}),
   result:new THREE.MeshStandardMaterial({color:0x8fd6bd, roughness:.45, metalness:.05}),
 };
@@ -190,12 +229,15 @@ function meshToObj(o){
   m.position.y = o.z + o.h/2;
 }
 const meshOf = id => raw.children.find(m => m.userData.id === id);
-const kill = m => { m.geometry?.dispose(); m.parent?.remove(m); };
+const kill = m => { m.geometry?.dispose(); m.children.forEach(c => c.geometry?.dispose()); m.parent?.remove(m); };
 const sig = o => o.type === 'poly' ? 'poly:' + o.sides
   : o.type === 'sketch' ? 'sketch:' + JSON.stringify(o.pts)
-  : o.type === 'thread' ? `thread:${o.dia}:${o.pitch}:${o.h}` : o.type;
+  : o.type === 'thread' ? `thread:${o.dia}:${o.pitch}:${o.h}`
+  : o.type === 'stl' ? 'stl:' + o.id            // точки импорта неизменны — не перестраивать зря
+  : o.type;
 
 function sync(){
+  updatePlateOption();
   const ids = new Set(objects.map(o => o.id));
   [...raw.children].forEach(m => { if(!ids.has(m.userData.id)) kill(m); });
   objects.forEach(o => {
@@ -204,6 +246,13 @@ function sync(){
       if(m) kill(m);
       let g; try{ g = unitGeo(o); }catch(e){ g = new THREE.BoxGeometry(1,1,1); say('контур эскиза не строится, заменён коробом', 'err'); }
       m = new THREE.Mesh(g); m.userData = {id:o.id, sig:sig(o)}; raw.add(m);
+      // рёбра — ребёнок меша: масштаб/поворот/позиция подхватываются сами, отдельно не синхронизируем
+      const edgeGeo = o.type === 'stl' ? null : new THREE.EdgesGeometry(g, 25);   // импорт STL — своя плотная сетка, обводка была бы мусором
+      if(edgeGeo){
+        const edges = new THREE.LineSegments(edgeGeo, EDGE_MAT);
+        edges.raycast = () => {};           // иначе клик мимо тела ловит линию рядом (у Line свой допуск)
+        m.add(edges);
+      }
     }
     objToMesh(o, m);
   });
@@ -239,14 +288,22 @@ $('result').onclick = () => {
 };
 
 // ---------- история ----------
+// undo живёт в localStorage, а не только в памяти вкладки — иначе reload стирает
+// всю историю правок. Риск: если сцену параллельно поменяли из другой вкладки/сессии,
+// сохранённый снимок может не совпасть с текущим — это цена клиентского undo при общей БД.
 const hist = [], redoStack = [];
+try{
+  const saved = JSON.parse(localStorage.hist || 'null');
+  if(saved){ hist.push(...saved.hist); redoStack.push(...saved.redo); }
+}catch(e){}
+const saveHist = () => { try{ localStorage.hist = JSON.stringify({hist, redo: redoStack}); }catch(e){} };
 const snapshot = () => JSON.stringify({objects, nextId});
 // push() — состояние ДО изменения; вызывать перед мутацией objects
-function push(){ hist.push(snapshot()); if(hist.length > 100) hist.shift(); redoStack.length = 0; }
+function push(){ hist.push(snapshot()); if(hist.length > 100) hist.shift(); redoStack.length = 0; saveHist(); }
 // Неполный объект (чужой или старый файл проекта) давал NaN в габаритах и матрицах,
 // поэтому недостающие поля добираем значениями по умолчанию, а не доверяем файлу.
 const DEFAULTS = {type:'box', x:0, y:0, z:0, w:10, d:10, h:10, rot:0, rx:0, rz:0,
-                  sides:6, dia:10, pitch:1.5, hole:false, vis:true, color:'#2dd4a7'};
+                  sides:6, dia:10, pitch:1.5, hole:false, vis:true, color:'#3fae8c'};
 const fill = o => {
   const r = {...DEFAULTS, ...o};
   for(const k of ['x','y','z','w','d','h','rot','rx','rz','sides','dia','pitch'])
@@ -264,13 +321,25 @@ function restore(s){
 $('lang').value = localStorage.lang || 'en';
 $('lang').onchange = e => { localStorage.lang = e.target.value; location.reload(); };
 
-$('undo').onclick = () => { if(!hist.length) return; redoStack.push(snapshot()); restore(hist.pop()); say('отменено'); };
-$('redo').onclick = () => { if(!redoStack.length) return; hist.push(snapshot()); restore(redoStack.pop()); say('повторено'); };
+// боковые панели: сворачиваем в 0, состояние помним между заходами
+[['toggle-left', 'left', '‹', '›'], ['toggle-right', 'right', '›', '‹']].forEach(([btn, side, open, closed]) => {
+  const aside = document.querySelector('aside.' + side);
+  const apply = collapsed => { aside.classList.toggle('collapsed', collapsed); $(btn).textContent = collapsed ? closed : open; };
+  apply(localStorage['panel-' + side] === '1');
+  $(btn).onclick = () => {
+    const collapsed = !aside.classList.contains('collapsed');
+    apply(collapsed);
+    localStorage['panel-' + side] = collapsed ? '1' : '';
+  };
+});
+
+$('undo').onclick = () => { if(!hist.length) return; redoStack.push(snapshot()); restore(hist.pop()); saveHist(); say('отменено'); };
+$('redo').onclick = () => { if(!redoStack.length) return; hist.push(snapshot()); restore(redoStack.pop()); saveHist(); say('повторено'); };
 let gizmoStart = null;
 gizmo.addEventListener('mouseDown', () => gizmoStart = snapshot());
 function gizmoDone(){
   updateGhost();
-  if(gizmoStart && gizmoStart !== snapshot()){ hist.push(gizmoStart); redoStack.length = 0; }
+  if(gizmoStart && gizmoStart !== snapshot()){ hist.push(gizmoStart); redoStack.length = 0; saveHist(); }
   gizmoStart = null; sync();
 }
 
@@ -297,11 +366,29 @@ $('save').onclick = () => {
   download(new Blob([snapshot()], {type:'application/json'}), 'project.pen3d.json');
   say('проект сохранён', 'ok');
 };
+
+// содержимое печати живёт в разметке отдельно, а не сбоку — переносим в попап под кнопкой
+$('printer-menu').appendChild($('printer-panel'));
+$('printer-panel').hidden = false;
+
+// открытие/закрытие/позиционирование попапов теперь в solid/popovers.js (SolidJS) —
+// собранный js/popovers-solid.js подключён отдельным <script> в index.html
+
+$('save-as-json').onclick = () => { $('save').click(); window.__popovers?.close(); };
+$('save-as-stl').onclick = () => { $('stl').click(); window.__popovers?.close(); };
 $('open').onclick = () => $('file').click();
 $('file').onchange = async e => {
   const f = e.target.files[0]; if(!f) return;
-  try{ const before = snapshot(); const t = await f.text(); restore(t); hist.push(before); redoStack.length = 0;
-    say('проект открыт: ' + f.name, 'ok'); }catch(err){ say('не открылся: ' + err.message, 'err'); }
+  try{
+    if(f.name.toLowerCase().endsWith('.stl')){
+      const {pts3, w, d, h} = parseStl(await f.arrayBuffer());
+      add('stl', {pts3, w, d, h, name: f.name.replace(/\.stl$/i, '')});
+      say('STL импортирован: ' + f.name, 'ok');
+    }else{
+      const before = snapshot(); const t = await f.text(); restore(t); hist.push(before); redoStack.length = 0; saveHist();
+      say('проект открыт: ' + f.name, 'ok');
+    }
+  }catch(err){ say('не открылся: ' + err.message, 'err'); }
   e.target.value = '';
 };
 $('clear').onclick = () => { if(!objects.length) return; if(!confirm('Очистить проект?')) return;
@@ -324,7 +411,7 @@ function add(type, extra={}){
                  sphere:'Шар', cone:'Конус', torus:'Кольцо', wedge:'Клин'};
   const o = {id: nextId, name: NAMES[type] + ' ' + nextId,
     type, x:0, y:0, z:0, w:30, d:30, h:10, rot:0, rx:0, rz:0, sides:6, dia:10, pitch:1.5,
-    color:'#2dd4a7', shell:0, openTop:false, hole:false, vis:true, ...extra};
+    color:'#3fae8c', shell:0, openTop:false, hole:false, vis:true, ...extra};
   if(['cyl','poly','cone','sphere','torus','wedge'].includes(type)) o.h = 15;
   if(type === 'thread'){ o.h = 20; o.w = o.d = o.dia; }
   if(!('x' in extra)) Object.assign(o, freeSpot(o));
@@ -420,7 +507,7 @@ function renderList(){
     row.className = 'obj' + (o.id === selId ? ' sel' : '') + (o.hole ? ' hole' : '')
                   + (o.vis ? '' : ' hidden') + (o.grp ? ' grp' : '');
     row.dataset.id = o.id;
-    row.innerHTML = `<span class="sw" style="background:${o.hole ? '' : esc(o.color || '#2dd4a7')}"></span><span class="nm">${esc(o.name)}</span>
+    row.innerHTML = `<span class="sw" style="background:${o.hole ? '' : esc(o.color || '#3fae8c')}"></span><span class="nm">${esc(o.name)}</span>
       <button title="отверстие / тело">${o.hole ? '⊖' : '⊕'}</button><button title="видимость">${o.vis ? '👁' : '—'}</button>`;
     row.onclick = () => select(o.id);
     const nm = row.querySelector('.nm'), [bh, bv] = row.querySelectorAll('button');
@@ -446,23 +533,40 @@ const showTab = t => document.querySelector(`.tabs button[data-tab="${t}"]`).cli
 
 // ---------- свойства ----------
 const P = ['name','hole','keep','vis','color','w','d','h','x','y','z','rot','rx','rz','sides','dia','pitch','shell','openTop'];
-function fillProps(){
-  const o = sel(); $('props').hidden = !o; $('noprops').hidden = !!o; if(!o) return;
-  for(const k of P){ const el = $('p-' + k);
-    if(k === 'keep') el.checked = o.mode === 'keep';
-    else if(el.type === 'checkbox') el.checked = o[k]; else if(document.activeElement !== el) el.value = o[k]; }
-  $('p-sides-row').style.display = o.type === 'poly' ? '' : 'none';
-  const th = o.type === 'thread';
-  const hollow = ['box','cyl','poly'].includes(o.type) && !o.hole;
-  $('p-shell-row').style.display = hollow ? '' : 'none';
-  $('p-open-row').style.display = hollow && o.shell > 0 ? '' : 'none';
-  $('p-dia-row').style.display = $('p-pitch-row').style.display = th ? '' : 'none';
-  $('p-w').disabled = $('p-d').disabled = th;
+const NUM_FIELDS = new Set(['w','d','h','x','y','z','rot','rx','rz','sides','dia','pitch','shell']);
+// поля размеров/позиции принимают выражения (w/2+3), не только число — считаем сами,
+// а не через eval: разрешаем только цифры/операторы/скобки и уже известные имена переменных
+function evalExpr(str, scope){
+  str = String(str).trim();
+  if(!/^[-+*/().\s\d]*$/.test(str.replace(/[a-zA-Z]+/g, ''))) return NaN;
+  const names = Object.keys(scope);
+  for(const w of str.match(/[a-zA-Z]+/g) || []) if(!names.includes(w)) return NaN;
+  try{ return Function(...names, `"use strict"; return (${str || '0'})`)(...names.map(n => scope[n])); }
+  catch(e){ return NaN; }
 }
+// сама отрисовка формы — в solid/props-panel.js (SolidJS), тут только источник данных
+function fillProps(){ window.__propsPanel?.update(sel()); }
+// скругление углов короба — не свойство, а подмена короба на эскиз с дугами по углам
+// (полноценного fillet по рёбрам в CSG нет); 0 в поле возвращает обратно в короб
+$('p-round').onchange = () => {
+  const o = sel(); if(!o) return;
+  const r = Math.max(0, evalExpr($('p-round').value, o) || 0);
+  if(!r){
+    if(o.type !== 'sketch' || !('round' in o)) return;
+    push(); Object.assign(o, {type:'box', w:o.roundW, d:o.roundD});
+    delete o.pts; delete o.round; delete o.roundW; delete o.roundD; sync(); say('скругление убрано');
+    return;
+  }
+  const w = o.type === 'sketch' ? o.roundW : o.w, d = o.type === 'sketch' ? o.roundD : o.d;
+  const g = roundedRect(w, d, r);
+  push(); Object.assign(o, {type:'sketch', pts:g.pts, w:g.size, d:g.size, round:g.r, roundW:w, roundD:d});
+  sync(); say(`угол скруглён: R${g.r.toFixed(1)}`, 'ok');
+};
 P.forEach(k => {
   const el = $('p-' + k);
   el.onchange = () => { const o = sel(); if(!o) return;
-    let v = el.type === 'checkbox' ? el.checked : el.type === 'number' ? +el.value : el.value.trim();
+    let v = el.type === 'checkbox' ? el.checked : NUM_FIELDS.has(k) ? evalExpr(el.value, o) : el.value.trim();
+    if(NUM_FIELDS.has(k) && !Number.isFinite(v)){ say('не считается: ' + el.value, 'err'); el.value = o[k]; return; }
     if(k === 'keep'){ push(); o.mode = v ? 'keep' : undefined; sync(); return; }
     if(k === 'color'){ o.color = v; sync(); persist(); return; }
     if(k === 'sides') v = Math.max(3, Math.min(64, Math.round(v)));
@@ -524,6 +628,17 @@ $('center').onclick = () => {
       inside ? '' : 'err');
 };
 
+$('stack').onclick = () => {
+  const o = sel(); if(!o) return say('выбери фигуру', 'err');
+  const hosts = objects.filter(x => !x.hole && x.vis && x !== o && (x.plate||0) === (o.plate||0));
+  if(!hosts.length) return say('не с чем совмещать — на столе нет тел', 'err');
+  const inside = hosts.find(x => Math.abs(o.x - x.x) <= x.w/2 && Math.abs(o.y - x.y) <= x.d/2);
+  const host = inside || hosts.reduce((a, b) =>
+    Math.hypot(a.x-o.x, a.y-o.y) < Math.hypot(b.x-o.x, b.y-o.y) ? a : b);
+  push(); o.x = host.x; o.y = host.y; o.z = +(host.z + host.h).toFixed(2); sync();
+  say(`поставлена сверху на «${host.name}»`, 'ok');
+};
+
 $('drop').onclick = () => {
   const o = sel(), m = o && meshOf(o.id); if(!m) return;
   m.updateMatrixWorld();
@@ -566,9 +681,46 @@ view.addEventListener('pointerup', e => {
   const moved = Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 4; downAt = null;
   if(moved || e.button !== 0) return;
   pointerNdc(e); ray.setFromCamera(ndc, cam);
+  if(measuring){ measureClick(); return; }
   const hit = ray.intersectObjects(raw.children.filter(m => m.visible))[0];
   select(hit ? hit.object.userData.id : null);
 });
+
+// ---------- измерение расстояния ----------
+// не CAD-констрейнты, просто «поставил две точки — увидел мм»: клик по телу или по столу
+let measuring = false, measurePts = [];
+const MEASURE_MAT = new THREE.LineDashedMaterial({color:0xffd166, dashSize:3, gapSize:2, depthTest:false});
+const measureDot = () => new THREE.Mesh(new THREE.SphereGeometry(1.2, 12, 12),
+  new THREE.MeshBasicMaterial({color:0xffd166, depthTest:false}));
+const measureDots = [measureDot(), measureDot()];
+measureDots.forEach(d => { d.visible = false; d.renderOrder = 999; scene.add(d); });
+let measureLine = null;
+function measureClick(){
+  const targets = raw.children.filter(m => m.visible).concat(plates.map(p => p.plate));
+  const hit = ray.intersectObjects(targets)[0];
+  if(!hit) return;
+  if(measurePts.length >= 2) measurePts = [];
+  measurePts.push(hit.point.clone());
+  measureDots.forEach((d, i) => d.visible = i < measurePts.length);
+  if(measurePts.length >= 1) measureDots[measurePts.length - 1].position.copy(hit.point);
+  if(measureLine){ scene.remove(measureLine); measureLine.geometry.dispose(); measureLine = null; }
+  if(measurePts.length === 2){
+    const g = new THREE.BufferGeometry().setFromPoints(measurePts);
+    measureLine = new THREE.Line(g, MEASURE_MAT); measureLine.computeLineDistances();
+    measureLine.renderOrder = 999; scene.add(measureLine);
+  }
+}
+function measureOff(){
+  measuring = false; measurePts = []; $('measure').classList.remove('on');
+  measureDots.forEach(d => d.visible = false);
+  if(measureLine){ scene.remove(measureLine); measureLine.geometry.dispose(); measureLine = null; }
+}
+$('measure').onclick = () => {
+  measuring = !measuring; $('measure').classList.toggle('on', measuring);
+  if(!measuring) measureOff(); else { measurePts = []; measureDots.forEach(d => d.visible = false);
+    if(measureLine){ scene.remove(measureLine); measureLine.geometry.dispose(); measureLine = null; } }
+  say(measuring ? 'измерение: кликни две точки' : 'измерение выключено');
+};
 
 // ---------- эскиз ----------
 let sketching = false, sk = null, skLine = null;
@@ -601,7 +753,7 @@ view.addEventListener('pointerup', () => {
 function drawSk(){
   if(skLine) kill(skLine);
   const g = new THREE.BufferGeometry().setFromPoints(sk.map(p => new THREE.Vector3(p[0], .3, p[1])));
-  skLine = new THREE.Line(g, new THREE.LineBasicMaterial({color:0x2dd4a7})); scene.add(skLine);
+  skLine = new THREE.Line(g, new THREE.LineBasicMaterial({color:0x3fae8c})); scene.add(skLine);
 }
 function finishSketch(p){
   const xs = p.map(q => q[0]), zs = p.map(q => q[1]);
@@ -668,7 +820,7 @@ addEventListener('keydown', e => {
   if(meta && e.key.toLowerCase() === 'z'){ e.preventDefault(); (e.shiftKey ? $('redo') : $('undo')).click(); return; }
   if(meta && e.key.toLowerCase() === 'd'){ e.preventDefault(); $('dup').click(); return; }
   if(e.key === 'Delete' || e.key === 'Backspace'){ e.preventDefault(); $('del').click(); return; }
-  if(e.key === 'Escape'){ if(sketching) $('sketch').click(); else select(null); return; }
+  if(e.key === 'Escape'){ if(measuring) measureOff(); else if(sketching) $('sketch').click(); else select(null); return; }
   const k = e.key.toLowerCase();
   if(k === 'g') setMode('translate'); if(k === 'r') setMode('rotate'); if(k === 's') setMode('scale');
   if(k === 'f'){ e.preventDefault(); focusSelection(); return; }
@@ -999,7 +1151,7 @@ $('gen').onclick = async e => {
   const done = busy(btn, t('думает…')); say(`${model.value} ${t('думает…')}`);
   try{
     if($('agent').checked && prov.value !== 'anthropic'){
-      agentBusy = true; $('stop').disabled = false; focusPlate(PLATE_GAP);
+      agentBusy = true; $('stop').disabled = false; updatePlateOption(); focusPlate(PLATE_GAP);
       const j = await runAgentStream(task, ev => {
         if(ev.type === 'thinking'){ say(`агент думает… шаг ${ev.step + 1}`); return; }
         if(ev.type !== 'tool') return;
@@ -1046,7 +1198,7 @@ $('gen').onclick = async e => {
     if(!parsed) throw new Error('модель вернула не JSON: ' + text.slice(0, 120));
     const {list, dropped} = sanitize(parsed.objects);
     push();
-    list.forEach(o => objects.push({...o, id: nextId++, color:'#2dd4a7', rx:0, rz:0, vis:true}));
+    list.forEach(o => objects.push({...o, id: nextId++, color:'#3fae8c', rx:0, rz:0, vis:true}));
     selId = null; sync(); loadLog();
     say(`добавлено фигур: ${list.length}` +
         (dropped.length ? ` · выброшены отверстия крупнее детали: ${dropped.join(', ')}` : ''),
@@ -1118,7 +1270,7 @@ async function libDel(id){
 
 function sketchSvg(pts){
   const d = pts.map((p, i) => `${i ? 'L' : 'M'}${(p[0]*100).toFixed(1)} ${(-p[1]*100).toFixed(1)}`).join(' ') + ' Z';
-  return `<svg viewBox="-60 -60 120 120"><path d="${d}" fill="#2dd4a733" stroke="#2dd4a7" stroke-width="3"/></svg>`;
+  return `<svg viewBox="-60 -60 120 120"><path d="${d}" fill="#3fae8c33" stroke="#3fae8c" stroke-width="3"/></svg>`;
 }
 function renderLib(){
   const box = $('lib'), l = libGet(); box.innerHTML = '';
@@ -1320,6 +1472,11 @@ function drawLabels(){
     label(i++, `${sz.z.toFixed(1)} мм`, V(b.max.x + 3, b.min.y, c.z));
     label(i++, `${sz.y.toFixed(1)} мм`, V(b.max.x + 3, c.y, b.max.z + 3));
     if(o.z > 0.05) label(i++, `↑ ${o.z} мм`, V(b.min.x - 3, o.z/2, b.max.z));
+  }
+
+  if(measurePts.length === 2){
+    const [a, bb] = measurePts, mid = a.clone().add(bb).multiplyScalar(.5);
+    label(i++, `${a.distanceTo(bb).toFixed(2)} мм`, mid, 'measure');
   }
   for(; i < pool.length; i++) pool[i].style.display = 'none';
   spread();
