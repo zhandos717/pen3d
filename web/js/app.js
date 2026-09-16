@@ -1510,14 +1510,24 @@ function updateGridLOD(){
   }
 }
 
-// ---------- линейки по краям (как в Figma, но привязаны к точке фокуса камеры,
-// а не к мировым координатам — в перспективе единого масштаба на весь экран не бывает) ----------
+// ---------- линейки по краям — как в Figma, но привязаны к столу (мировые X/Z через
+// плоскость Y=0, та же, что размечена краевыми подписями 128/64/0/-64/-128), а не к
+// камере: подвинул вид — числа остались на месте, а не переехали вместе с фокусом.
+// Точны в орто-видах (Сверху/Спереди/Сбоку); в свободном 3D — приближённо, как и
+// любая линейка в перспективе без единого масштаба на весь экран.
 const rulerX = $('ruler-x'), rulerY = $('ruler-y');
 const rxCtx = rulerX.getContext('2d'), ryCtx = rulerY.getContext('2d');
 const RULER_BG = getComputedStyle(document.documentElement).getPropertyValue('--panel').trim() || '#16181d';
 const RULER_DIM = getComputedStyle(document.documentElement).getPropertyValue('--dim').trim() || '#8a909b';
 const NICE_STEPS = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000];
 const niceStep = (pxPerUnit, targetPx) => NICE_STEPS.find(s => s * pxPerUnit >= targetPx) || 1000;
+const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const rulerRay = new THREE.Raycaster();
+function toGround(ndcX, ndcY){
+  rulerRay.setFromCamera({x: ndcX, y: ndcY}, cam);
+  const hit = new THREE.Vector3();
+  return rulerRay.ray.intersectPlane(groundPlane, hit) ? hit : null;
+}
 
 function drawRulers(){
   const W = view.clientWidth, H = view.clientHeight;
@@ -1528,44 +1538,44 @@ function drawRulers(){
     rulerY.style.width = '22px'; rulerY.style.height = H+'px'; }
   rxCtx.setTransform(dpr,0,0,dpr,0,0); ryCtx.setTransform(dpr,0,0,dpr,0,0);
 
-  // локальный масштаб у точки, куда сейчас смотрит камера: сдвиг на 10мм вдоль
-  // экранных «право» и «верх» камеры, спроецированный обратно в пиксели
-  const right = new THREE.Vector3(), up = new THREE.Vector3(), fwd = new THREE.Vector3();
-  cam.matrixWorld.extractBasis(right, up, fwd);
-  const p0 = orbit.target;
-  const s0 = p0.clone().project(cam);
-  const sx = p0.clone().addScaledVector(right, 10).project(cam);
-  const sy = p0.clone().addScaledVector(up, 10).project(cam);
-  const pxPerMmX = Math.abs((sx.x - s0.x) * .5 * W) / 10;
-  const pxPerMmY = Math.abs((sy.y - s0.y) * .5 * H) / 10;
-  const cx = (s0.x * .5 + .5) * W, cy = (-s0.y * .5 + .5) * H;
-
   rxCtx.clearRect(0, 0, W, 20); rxCtx.fillStyle = RULER_BG; rxCtx.fillRect(0, 0, W, 20);
   ryCtx.clearRect(0, 0, 22, H); ryCtx.fillStyle = RULER_BG; ryCtx.fillRect(0, 0, 22, H);
   rxCtx.strokeStyle = ryCtx.strokeStyle = RULER_DIM;
   rxCtx.fillStyle = ryCtx.fillStyle = RULER_DIM;
   rxCtx.font = ryCtx.font = '10px ui-monospace,monospace';
 
+  // опорная точка — центр экрана на плоскости стола; относительно нее меряем
+  // локальный масштаб (мм/пиксель), а сами деления кладём на круглые мировые X/Z
+  const center = toGround(0, 0);
+  if(!center) return;   // смотрим мимо стола (в небо) — мерить нечему
+  const dx = toGround(20 / W, 0), dy = toGround(0, 20 / H);
+  const pxPerMmX = dx ? 20 / Math.max(1e-6, Math.abs(dx.x - center.x)) : 0;
+  const pxPerMmY = dy ? 20 / Math.max(1e-6, Math.abs(dy.z - center.z)) : 0;
+
   if(pxPerMmX > .3){
-    const step = niceStep(pxPerMmX, 55), stepPx = step * pxPerMmX;
-    const n0 = Math.floor(-cx / stepPx), n1 = Math.ceil((W - cx) / stepPx);
+    const step = niceStep(pxPerMmX, 55);
+    const from = Math.floor((center.x - W/2/pxPerMmX) / step) * step;
+    const to = center.x + W/2/pxPerMmX;
     rxCtx.beginPath();
-    for(let n = n0; n <= n1; n++){
-      const x = cx + n * stepPx, major = n % 5 === 0;
+    for(let v = from, i = 0; v <= to; v += step, i++){
+      const s = new THREE.Vector3(v, 0, center.z).project(cam);
+      const x = (s.x * .5 + .5) * W, major = i % 5 === 0;
       rxCtx.moveTo(x, 20); rxCtx.lineTo(x, major ? 9 : 14);
-      if(major) rxCtx.fillText(String(Math.round(n * step)), x + 2, 9);
+      if(major) rxCtx.fillText(String(Math.round(v)), x + 2, 9);
     }
     rxCtx.stroke();
   }
   if(pxPerMmY > .3){
-    const step = niceStep(pxPerMmY, 55), stepPx = step * pxPerMmY;
-    const n0 = Math.floor(-cy / stepPx), n1 = Math.ceil((H - cy) / stepPx);
+    const step = niceStep(pxPerMmY, 55);
+    const from = Math.floor((center.z - H/2/pxPerMmY) / step) * step;
+    const to = center.z + H/2/pxPerMmY;
     ryCtx.beginPath();
-    for(let n = n0; n <= n1; n++){
-      const y = cy - n * stepPx, major = n % 5 === 0;
+    for(let v = from, i = 0; v <= to; v += step, i++){
+      const s = new THREE.Vector3(center.x, 0, v).project(cam);
+      const y = (-s.y * .5 + .5) * H, major = i % 5 === 0;
       ryCtx.moveTo(22, y); ryCtx.lineTo(major ? 8 : 13, y);
       if(major){ ryCtx.save(); ryCtx.translate(11, y - 2); ryCtx.rotate(-Math.PI/2);
-        ryCtx.fillText(String(Math.round(n * step)), 0, 0); ryCtx.restore(); }
+        ryCtx.fillText(String(Math.round(v)), 0, 0); ryCtx.restore(); }
     }
     ryCtx.stroke();
   }
