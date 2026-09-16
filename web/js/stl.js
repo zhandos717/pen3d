@@ -36,7 +36,7 @@ export function meshToStl(mesh){
 
   const buf = new ArrayBuffer(84 + tris * 50);
   const view = new DataView(buf);
-  new Uint8Array(buf, 0, 80).set(new TextEncoder().encode('pen3d'));   // заголовок, остальное нули
+  new Uint8Array(buf, 0, 80).set(new TextEncoder().encode('usta'));   // заголовок, остальное нули
   view.setUint32(80, tris, true);
 
   let at = 84;

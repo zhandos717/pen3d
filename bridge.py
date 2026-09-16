@@ -7,7 +7,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(HERE, 'web')
-CFG = os.path.expanduser('~/.pen3d.json')
+CFG = os.path.expanduser('~/.usta.json')
+_OLD_CFG = os.path.expanduser('~/.pen3d.json')
+if not os.path.exists(CFG) and os.path.exists(_OLD_CFG):    # миграция со старого имени проекта
+    os.rename(_OLD_CFG, CFG)
 STUDIO = '/Applications/BambuStudio.app/Contents/MacOS/BambuStudio'
 SYS = os.path.expanduser('~/Library/Application Support/BambuStudio/system/BBL')
 PRESETS = dict(
@@ -460,8 +463,8 @@ def flatten_preset(path, outdir, name_suffix=''):
         merged.update(d)
     merged.pop('inherits', None)
     merged['from'] = 'User'
-    merged['name'] = merged.get('name', 'pen3d') + name_suffix
-    out = os.path.join(outdir, 'filament-pen3d.json')
+    merged['name'] = merged.get('name', 'usta') + name_suffix
+    out = os.path.join(outdir, 'filament-usta.json')
     with open(out, 'w') as f:
         json.dump(merged, f)
     return out
@@ -510,7 +513,7 @@ def process_preset(outdir, support, infill=None, pattern=None, walls=None, bed='
         return PRESETS['process']
     with open(PRESETS['process']) as f:
         p = json.load(f)
-    p['name'] = 'pen3d'
+    p['name'] = 'usta'
     if bed:                                    # без явного стола CLI берёт Cool Plate,
         p['curr_bed_type'] = bed               # и PETG греется до 35° вместо 70°
     if support:
@@ -521,7 +524,7 @@ def process_preset(outdir, support, infill=None, pattern=None, walls=None, bed='
         p['sparse_infill_pattern'] = pattern
     if walls:
         p['wall_loops'] = str(walls)
-    path = os.path.join(outdir, 'process-pen3d.json')
+    path = os.path.join(outdir, 'process-usta.json')
     with open(path, 'w') as f:
         json.dump(p, f)
     return path
@@ -539,7 +542,7 @@ def sliced(stl_bytes, support, infill, pattern, walls, material=None, bed='Textu
     hit = SLICE_CACHE.get(key)
     if hit and os.path.exists(hit[0]):
         return hit
-    td = tempfile.mkdtemp(prefix='pen3d-')
+    td = tempfile.mkdtemp(prefix='usta-')
     sp = os.path.join(td, 'model.stl')
     with open(sp, 'wb') as f:
         f.write(stl_bytes)
@@ -612,7 +615,7 @@ def upload(path, name, ip, code):
         ftp.mkd('/cache'); ftp.cwd('/cache')
     try:                                       # свои прошлые задания подчищаем, чужие не трогаем
         for old in ftp.nlst():
-            if old.startswith('pen3d-') and old.endswith('.3mf') and old != name:
+            if old.startswith('usta-') and old.endswith('.3mf') and old != name:
                 try: ftp.delete(old)
                 except (ftplib.Error, OSError): pass
     except (ftplib.Error, OSError, TimeoutError):
@@ -652,7 +655,7 @@ def printer_watch():
     import paho.mqtt.client as mqtt
     c = cfg() if os.path.exists(CFG) else {}
     if not (c.get('ip') and c.get('code') and c.get('serial')):
-        PRINTER['error'] = 'в ~/.pen3d.json нет ip, code или serial'
+        PRINTER['error'] = 'в ~/.usta.json нет ip, code или serial'
         return
 
     def on_connect(cl, ud, flags, rc, props=None):
@@ -989,7 +992,7 @@ class H(BaseHTTPRequestHandler):
             c = cfg()
             mf, _td = sliced(stl, support, infill, pattern, walls, None, bed)
             if True:
-                name = f'pen3d-{uuid.uuid4().hex[:6]}.gcode.3mf'
+                name = f'usta-{uuid.uuid4().hex[:6]}.gcode.3mf'
                 upload(mf, name, c['ip'], c['code'])
                 if do_print:
                     start_print(name, c['ip'], c['code'], c['serial'], file_md5(mf))
@@ -1004,19 +1007,19 @@ class H(BaseHTTPRequestHandler):
         try:
             c = cfg()
         except (OSError, ValueError) as e:
-            return self._send(500, {'error': f'нет ~/.pen3d.json: {e}'})
+            return self._send(500, {'error': f'нет ~/.usta.json: {e}'})
         try:
             frames = camera_frames(c['ip'], c['code'])
             first = next(frames)
         except Exception as e:
             return self._send(502, {'error': f'камера недоступна: {type(e).__name__}: {e}'})
         self.send_response(200)
-        self.send_header('content-type', 'multipart/x-mixed-replace; boundary=pen3dframe')
+        self.send_header('content-type', 'multipart/x-mixed-replace; boundary=ustaframe')
         self.send_header('cache-control', 'no-store')
         self.end_headers()
         try:
             for jpg in itertools.chain([first], frames):
-                self.wfile.write(b'--pen3dframe\r\nContent-Type: image/jpeg\r\n'
+                self.wfile.write(b'--ustaframe\r\nContent-Type: image/jpeg\r\n'
                                  + f'Content-Length: {len(jpg)}\r\n\r\n'.encode() + jpg + b'\r\n')
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, ConnectionError):
@@ -1189,6 +1192,6 @@ if __name__ == '__main__':
     db.init()
     host = '0.0.0.0' if '--lan' in sys.argv else '127.0.0.1'
     port = 8765
-    print(f'pen3d: http://{"127.0.0.1" if host == "127.0.0.1" else socket.gethostbyname(socket.gethostname())}:{port}'
+    print(f'usta: http://{"127.0.0.1" if host == "127.0.0.1" else socket.gethostbyname(socket.gethostname())}:{port}'
           + ('' if host == '127.0.0.1' else '  (открыт в локальную сеть)'))
     ThreadingHTTPServer((host, port), H).serve_forever()
