@@ -53,7 +53,7 @@ export function buildResult(objects, objToMesh, mat){
   const keeps = dedupe(objects.filter(o => o.vis && !o.hole && o.mode === 'keep'));
   const cavities = solids.map(innerOf).filter(Boolean);
   const holes = dedupe(objects.filter(o => o.vis && o.hole)).map(o => ({...o,
-    w: o.w + .002, d: o.d + .002, h: o.h + .002, z: Math.max(0, o.z - .001)}));
+    w: o.w + .002, d: o.d + .002, h: o.h + .002, z: o.z - .001}));
   if(!solids.length) return null;
   let acc = brushOf(solids[0], objToMesh, mat);
   const step = (o, op) => { const b = brushOf(o, objToMesh, mat), prev = acc; acc = csg.evaluate(acc, b, op);

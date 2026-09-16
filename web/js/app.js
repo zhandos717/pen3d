@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { unitGeo } from './geometry.js';
+import { unitGeo, hingeShift } from './geometry.js';
 import { parseStl } from './stl-import.js';
 import { buildResult, holeGhost } from './csg.js';
 import { meshToStlAsync } from './stl.js';
@@ -251,8 +251,12 @@ function meshToObj(o){
   o.x = +(m.position.x - (o.plate ? PLATE_GAP : 0)).toFixed(2); o.y = +m.position.z.toFixed(2);
   const deg = r => +(((THREE.MathUtils.radToDeg(r) % 360) + 360) % 360).toFixed(1);
   o.rot = deg(m.rotation.y); o.rx = deg(m.rotation.x); o.rz = deg(m.rotation.z);
-  const low = m.position.y - o.h/2;
-  o.z = +(o.hole ? low : Math.max(0, low)).toFixed(2);
+  // скейл-гизмо тянет от центра меша, обе грани расходятся симметрично; низ держим
+  // на месте, иначе уменьшение высоты подрезает деталь ещё и снизу
+  if(gizmo.getMode() !== 'scale'){
+    const low = m.position.y - o.h/2;
+    o.z = +(o.hole ? low : Math.max(0, low)).toFixed(2);
+  }
   m.position.y = o.z + o.h/2;
 }
 const meshOf = id => raw.children.find(m => m.userData.id === id);
@@ -559,7 +563,7 @@ document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
 const showTab = t => document.querySelector(`.tabs button[data-tab="${t}"]`).click();
 
 // ---------- свойства ----------
-const P = ['name','hole','keep','vis','color','w','d','h','x','y','z','rot','rx','rz','sides','dia','pitch','shell','openTop'];
+const P = ['name','hole','keep','vis','color','w','d','h','x','y','z','rot','rx','rz','sides','dia','pitch','shell','openTop','hinge'];
 const NUM_FIELDS = new Set(['w','d','h','x','y','z','rot','rx','rz','sides','dia','pitch','shell']);
 // поля размеров/позиции принимают выражения (w/2+3), не только число — считаем сами,
 // а не через eval: разрешаем только цифры/операторы/скобки и уже известные имена переменных
@@ -572,7 +576,23 @@ function evalExpr(str, scope){
   catch(e){ return NaN; }
 }
 // сама отрисовка формы — в solid/props-panel.js (SolidJS), тут только источник данных
-function fillProps(){ window.__propsPanel?.update(sel()); }
+// петля не в списке полей solid-панели, поэтому её значение подставляем сами
+function fillProps(){
+  const o = sel(); window.__propsPanel?.update(o);
+  if(o) $('p-hinge').value = o.hinge || '';
+}
+// Поворот вокруг петли: гизмо и матрица меша крутят вокруг центра, поэтому центр
+// доводим сдвигом так, чтобы ребро петли осталось на месте.
+// ponytail: компенсация живёт на изменении углов через поля и кнопки выравнивания;
+// поворот мышкой через гизмо по-прежнему крутит вокруг центра
+function turn(o, k, v){
+  const d = hingeShift(o, {rx:o.rx, rot:o.rot, rz:o.rz, [k]: v});
+  o[k] = v;
+  if(!d) return;
+  o.x = +(o.x + d.x).toFixed(2);
+  o.y = +(o.y + d.z).toFixed(2);
+  o.z = +(o.z + d.y).toFixed(2);
+}
 // скругление углов короба — не свойство, а подмена короба на эскиз с дугами по углам
 // (полноценного fillet по рёбрам в CSG нет); 0 в поле возвращает обратно в короб
 $('p-round').onchange = () => {
@@ -616,7 +636,8 @@ P.forEach(k => {
       const d = v - o[k];
       objects.forEach(x => { if(x.grp === o.grp && x !== o) x[k] = +(x[k] + d).toFixed(2); });
     }
-    o[k] = v; sync(); };
+    if(k === 'rot' || k === 'rx' || k === 'rz') turn(o, k, v); else o[k] = v;
+    sync(); };
 });
 
 // выравнивание: угол к ближайшим 90°, деталь обратно на стол
@@ -624,7 +645,8 @@ document.querySelectorAll('[data-align]').forEach(b => b.onclick = () => {
   const o = sel(); if(!o) return say('выбери фигуру', 'err');
   const k = b.dataset.align, v = (Math.round((o[k] || 0)/90)*90) % 360;
   if(v === (o[k] || 0)) return say('уже выровнено');
-  push(); o[k] = v; sync(); $('drop').click();
+  push(); turn(o, k, v); sync();
+  if(!o.hinge) $('drop').click();          // на петле деталь висит, ронять её нельзя
   say(`${k === 'rot' ? 'Y' : k === 'rx' ? 'X' : 'Z'} → ${v}°`);
 });
 
