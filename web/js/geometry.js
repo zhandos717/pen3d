@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 // Винтовая поверхность: радиус зависит от z и угла, торцы закрыты — сетка водонепроницаемая.
 export function threadGeo(o){
-  const R = o.dia/2, p = o.pitch, H = o.h, depth = p*0.55;
+  const R = o.dia/2, p = o.pitch, H = o.h, depth = Math.min(p*0.55, R*0.8);
   const NA = 64, NZ = Math.min(2000, Math.max(8, Math.round(H/p*16)));
   const pos = [], idx = [];
   const rAt = (z, a) => {
@@ -76,6 +76,26 @@ export function stlUnitGeo(pts3){
   g.setAttribute('position', new THREE.Float32BufferAttribute(pts3, 3));
   g.computeVertexNormals();
   return g;
+}
+
+// Петля: ось вращения идёт по выбранному ребру тела, а не через его центр.
+// Точка петли в локальных осях, от центра; габариты берём текущие, чтобы петля
+// не уезжала после изменения размеров
+export const HINGE = {
+  left:  o => [-o.w/2, 0, 0], right: o => [o.w/2, 0, 0],
+  back:  o => [0, 0, -o.d/2], front: o => [0, 0, o.d/2],
+  bottom:o => [0, -o.h/2, 0], top:   o => [0, o.h/2, 0],
+};
+const eulerOf = (rx, rot, rz) => new THREE.Euler(THREE.MathUtils.degToRad(rx || 0),
+  THREE.MathUtils.degToRad(rot || 0), THREE.MathUtils.degToRad(rz || 0), 'YXZ');
+// Поворот вокруг центра + этот сдвиг = поворот вокруг петли: точка петли остаётся
+// на месте. next — углы после поворота. Без петли сдвига нет.
+export function hingeShift(o, next){
+  const off = HINGE[o.hinge]?.(o);
+  if(!off) return null;
+  const p = new THREE.Vector3(...off);
+  return p.clone().applyEuler(eulerOf(o.rx, o.rot, o.rz))
+    .sub(p.clone().applyEuler(eulerOf(next.rx, next.rot, next.rz)));
 }
 
 export function unitGeo(o){

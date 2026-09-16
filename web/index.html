@@ -433,6 +433,17 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
             <button class="sm" data-align="rot" title="поворот Y к 90°">Y</button>
             <button class="sm" data-align="rz" title="наклон Z к 90°">Z</button>
           </div>
+          <label class="f" title="ось вращения по ребру, а не через центр: дверца, крышка">петля
+            <select id="p-hinge">
+              <option value="">нет</option>
+              <option value="left">левое ребро</option>
+              <option value="right">правое ребро</option>
+              <option value="back">заднее ребро</option>
+              <option value="front">переднее ребро</option>
+              <option value="bottom">нижнее ребро</option>
+              <option value="top">верхнее ребро</option>
+            </select>
+          </label>
           <label class="f" id="p-sides-row">граней <input id="p-sides" type="text" inputmode="decimal" step="1" min="3" max="64"></label>
           <label class="f" id="p-shell-row">стенка, мм <input id="p-shell" type="text" inputmode="decimal" step="0.5" min="0" value="0"></label>
           <label class="f chk" id="p-open-row">открыть сверху <input id="p-openTop" type="checkbox"></label>
