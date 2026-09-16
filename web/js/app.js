@@ -595,7 +595,11 @@ function evalExpr(str, scope){
 // петля не в списке полей solid-панели, поэтому её значение подставляем сами
 function fillProps(){
   const o = sel(); window.__propsPanel?.update(o);
-  if(o) $('p-hinge').value = o.hinge || '';
+  if(!o) return;
+  $('p-hinge').value = o.hinge || '';
+  const n = o.grp ? objects.filter(x => x.grp === o.grp).length : 0;
+  $('grp-status').textContent = n ? `⛓ в группе из ${n} тел — двигаются вместе` : 'не связана ни с чем';
+  $('ungroup').style.display = n ? '' : 'none';
 }
 // Поворот вокруг петли: гизмо и матрица меша крутят вокруг центра, поэтому центр
 // доводим сдвигом так, чтобы ребро петли осталось на месте.
@@ -705,11 +709,18 @@ $('stack').onclick = () => {
 };
 
 $('drop').onclick = () => {
-  const o = sel(), m = o && meshOf(o.id); if(!m) return;
-  m.updateMatrixWorld();
-  const under = new THREE.Box3().setFromObject(m).min.y;
+  const o = sel(); if(!o || !meshOf(o.id)) return;
+  // низ считаем по всей группе, не только по выбранному телу — иначе если выбран не
+  // самый нижний member, остальные после сдвига на тот же дельта уезжают под стол
+  const part = o.grp ? objects.filter(x => x.grp === o.grp) : [o];
+  const box = new THREE.Box3();
+  part.forEach(x => { const m = meshOf(x.id); if(m){ m.updateMatrixWorld(); box.expandByObject(m); } });
+  const under = box.min.y;
   if(Math.abs(under) < 1e-3) return say('уже на столе');
-  push(); o.z = +Math.max(0, o.z - under).toFixed(2); sync(); say('посажена на стол');
+  push();
+  const dz = +(-under).toFixed(2);
+  part.forEach(x => x.z = +Math.max(0, x.z + dz).toFixed(2));
+  sync(); say(o.grp ? 'группа опущена на стол' : 'посажена на стол');
 };
 
 // два тела одного сечения (тот же X/Y-центр и Ш/Г), уложенные впритык или внахлёст по Z —
