@@ -1552,7 +1552,15 @@ function drawRulers(){
   const pxPerMmX = dx ? 20 / Math.max(1e-6, Math.abs(dx.x - center.x)) : 0;
   const pxPerMmY = dy ? 20 / Math.max(1e-6, Math.abs(dy.z - center.z)) : 0;
 
-  if(pxPerMmX > .3){
+  // в перспективе мировой шаг X/Z в пикселях неравномерен по экрану — единой линейкой
+  // это не нарисовать честно. Смотрим напрямую, куда направлена камера: если это не
+  // почти строго сверху и не почти строго вдоль X/Z (виды Сверху/Спереди/Сбоку,
+  // не важно как их достигли — кнопкой или довернули орбитой) — деления не рисуем
+  const dir = new THREE.Vector3(); cam.getWorldDirection(dir);
+  const axisAligned = Math.abs(dir.y) > .97 || Math.abs(dir.x) > .97 || Math.abs(dir.z) > .97;
+  const tooTiltedX = !axisAligned, tooTiltedY = !axisAligned;
+
+  if(pxPerMmX > .3 && !tooTiltedX){
     const step = niceStep(pxPerMmX, 55);
     const from = Math.floor((center.x - W/2/pxPerMmX) / step) * step;
     const to = center.x + W/2/pxPerMmX;
@@ -1565,7 +1573,7 @@ function drawRulers(){
     }
     rxCtx.stroke();
   }
-  if(pxPerMmY > .3){
+  if(pxPerMmY > .3 && !tooTiltedY){
     const step = niceStep(pxPerMmY, 55);
     const from = Math.floor((center.z - H/2/pxPerMmY) / step) * step;
     const to = center.z + H/2/pxPerMmY;
