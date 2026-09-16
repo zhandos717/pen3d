@@ -2,11 +2,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="/icon.svg">
-<title>pen3d</title>
+<title>usta</title>
 <style>
 :root{
   --bg:#0e0f12; --panel:#16181d; --line:#24272e; --ink:#e6e8ec; --dim:#8a909b;
-  --accent:#2dd4a7; --accent-ink:#04150f; --danger:#f87171;
+  --accent:#3fae8c; --accent-ink:#04150f; --danger:#f87171;
 }
 *{box-sizing:border-box}
 body{margin:0;height:100vh;display:flex;flex-direction:column;overflow:hidden;
@@ -15,8 +15,9 @@ body{margin:0;height:100vh;display:flex;flex-direction:column;overflow:hidden;
 
 header{display:flex;align-items:center;gap:8px;padding:0 12px;height:46px;
   background:var(--panel);border-bottom:1px solid var(--line);flex:none}
-.logo{font-weight:600;margin-right:10px}
-.logo span{color:var(--accent)}
+.logo{font-weight:600;margin-right:10px;display:flex;align-items:center;gap:7px}
+.logo svg{width:18px;height:18px;fill:none;stroke:var(--accent);stroke-width:1.8;
+  stroke-linecap:round;stroke-linejoin:round}
 .sep{flex:1}
 #status{color:var(--dim);max-width:46ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #status.err{color:var(--danger)} #status.ok{color:var(--accent)}
@@ -24,11 +25,25 @@ header{display:flex;align-items:center;gap:8px;padding:0 12px;height:46px;
 .tb:first-of-type{border:0;padding-left:0}
 
 main{flex:1;display:flex;min-height:0}
-aside{width:250px;flex:none;background:var(--panel);overflow-y:auto;padding:12px}
+aside{width:250px;flex:none;background:var(--panel);overflow-y:auto;padding:12px;
+  transition:width .15s ease}
+aside.collapsed{width:0;padding-left:0;padding-right:0;overflow:hidden;border-color:transparent}
 aside.left{border-right:1px solid var(--line)}
 aside.right{border-left:1px solid var(--line)}
+.panel-toggle{position:absolute;top:50%;transform:translateY(-50%);width:20px;height:20px;
+  background:var(--panel);border:1px solid var(--line);border-radius:50%;cursor:pointer;
+  color:var(--dim);font-size:11px;z-index:5;padding:0;display:grid;place-items:center}
+.panel-toggle:hover{color:var(--ink)}
+#toggle-left{left:6px}
+#toggle-right{right:6px}
 .grp{margin-bottom:16px}
 .grp h2{margin:0 0 8px;font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--dim)}
+.pop-anchor{position:relative}
+.popover{position:absolute;top:calc(100% + 6px);right:0;width:280px;max-height:80vh;overflow-y:auto;
+  background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;
+  box-shadow:0 12px 32px rgba(0,0,0,.45);z-index:50}
+.popover .grp:last-child{margin-bottom:0}
+.popover.fixed{position:fixed;top:auto;right:auto}
 .stack{display:flex;flex-direction:column;gap:6px}
 .pair{display:flex;gap:6px} .pair>*{flex:1;min-width:0}
 .grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}
@@ -67,6 +82,11 @@ code{font:11px ui-monospace,monospace;color:var(--dim)}
 #view{width:100%;height:100%;display:block;background:#111318}
 #stage .cap{position:absolute;bottom:10px;left:12px;color:var(--dim);pointer-events:none;font-variant-numeric:tabular-nums}
 #stage .views{position:absolute;top:10px;right:10px;display:flex;gap:4px}
+#pan-bar{position:absolute;left:50%;transform:translateX(-50%);bottom:10px;width:220px;height:14px;
+  background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:7px;cursor:ew-resize;touch-action:none}
+#pan-bar i{position:absolute;top:1px;left:50%;transform:translateX(-50%);width:36px;height:10px;
+  border-radius:5px;background:var(--dim);transition:background .1s}
+#pan-bar:hover i, #pan-bar.on i{background:var(--ink)}
 #hud{position:absolute;display:flex;align-items:center;gap:2px;padding:4px;
   transform:translate(-50%,-100%);z-index:3;pointer-events:none;
   background:rgba(22,24,29,.62);border:1px solid rgba(255,255,255,.1);border-radius:10px;
@@ -77,7 +97,7 @@ code{font:11px ui-monospace,monospace;color:var(--dim)}
   align-items:center;gap:2px;background:transparent;border:1px solid transparent;border-radius:7px;color:var(--dim)}
 #hud button i{font-style:normal;font-size:9.5px;letter-spacing:.02em;line-height:1}
 #hud button:hover{background:rgba(255,255,255,.08);color:var(--ink)}
-#hud button.on{background:rgba(45,212,167,.18);border-color:rgba(45,212,167,.5);color:var(--accent)}
+#hud button.on{background:rgba(63,174,140,.18);border-color:rgba(63,174,140,.5);color:var(--accent)}
 #hud svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;
   stroke-linecap:round;stroke-linejoin:round}
 #hud .sep{width:1px;height:26px;background:rgba(255,255,255,.12);margin:0 3px}
@@ -88,15 +108,16 @@ code{font:11px ui-monospace,monospace;color:var(--dim)}
 .tools button{padding:0;width:34px;height:34px;display:grid;place-items:center;
   background:transparent;border:1px solid transparent;border-radius:8px;color:var(--dim)}
 .tools button:hover{background:rgba(255,255,255,.07);border-color:transparent;color:var(--ink)}
-.tools button.on{background:rgba(45,212,167,.16);border-color:rgba(45,212,167,.5);color:var(--accent)}
+.tools button.on{background:rgba(63,174,140,.16);border-color:rgba(63,174,140,.5);color:var(--accent)}
 .tools svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;
   stroke-linecap:round;stroke-linejoin:round}
 .tools .hr{height:1px;background:rgba(255,255,255,.09);margin:2px 1px}
 #labels{position:absolute;inset:0;pointer-events:none;overflow:hidden}
 #labels div{position:absolute;transform:translate(-50%,-50%);white-space:nowrap;
-  font:11px/1 ui-monospace,monospace;color:#0b0d10;background:#2dd4a7;
+  font:11px/1 ui-monospace,monospace;color:#0b0d10;background:#3fae8c;
   padding:2px 5px;border-radius:4px;font-variant-numeric:tabular-nums}
 #labels div.bed{background:#0e0f1288;color:var(--dim);border:1px solid var(--line)}
+#labels div.measure{background:#ffd166;color:#2a1d02}
 #stage.sketch #view{cursor:crosshair}
 
 #list{display:flex;flex-direction:column;gap:2px}
@@ -108,6 +129,9 @@ code{font:11px ui-monospace,monospace;color:var(--dim)}
 .rec.bad{border-color:#5a2a33} .rec.bad .meta{color:var(--danger)}
 .adds{display:grid;grid-template-columns:1fr 1fr;gap:6px}
 .adds button{padding:8px 6px}
+button:has(svg){display:inline-flex;align-items:center;justify-content:center}
+button svg{width:16px;height:16px;flex:none;margin-right:6px;
+  fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .tabs{display:flex;gap:4px;margin:-2px 0 12px}
 .tabs button{flex:1;padding:5px 4px;font-size:12px}
 .tabpane[hidden]{display:none}
@@ -158,10 +182,10 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
 </style>
 
 <header>
-  <div class="logo">pen<span>3d</span></div>
+  <div class="logo"><svg viewBox="0 0 24 24"><path d="M4 7l8-4 8 4-8 4-8-4z"/><path d="M4 7v10l8 4 8-4V7"/><path d="M12 11v10"/></svg>usta</div>
   <div class="tb">
-    <button class="sm" id="undo" title="⌘Z">↶</button>
-    <button class="sm" id="redo" title="⇧⌘Z">↷</button>
+    <button class="sm" id="undo" title="⌘Z"><svg viewBox="0 0 24 24"><path d="M9 7L4 12l5 5"/><path d="M4 12h11a5 5 0 0 1 0 10h-1"/></svg></button>
+    <button class="sm" id="redo" title="⇧⌘Z"><svg viewBox="0 0 24 24"><path d="M15 7l5 5-5 5"/><path d="M20 12H9a5 5 0 0 0 0 10h1"/></svg></button>
     <button class="sm" id="dup" title="⌘D">Дубль</button>
     <button class="sm" id="del" title="Delete">Удалить</button>
   </div>
@@ -169,14 +193,27 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
     <button class="sm" id="result">Результат</button>
   </div>
   <div class="tb">
+    <div class="pop-anchor">
+      <button class="sm" id="save-top" title="Сохранить: выбрать формат"><svg viewBox="0 0 24 24"><path d="M5 4h11l3 3v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/><path d="M8 4v5h7V4"/><path d="M7 14h10v6H7z"/></svg>Сохранить</button>
+      <div id="save-menu" class="popover" hidden>
+        <button class="sm" id="save-as-json" style="width:100%">Проект (.pen3d.json)</button>
+        <button class="sm" id="save-as-stl" style="width:100%;margin-top:6px">STL для печати</button>
+      </div>
+    </div>
+    <div class="pop-anchor">
+      <button class="sm" id="printer-top" title="Статус и настройки принтера"><svg viewBox="0 0 24 24"><path d="M6 9V3h12v6"/><path d="M6 18H4a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-2"/><path d="M6 14h12v7H6z"/></svg>Принтер</button>
+      <div id="printer-menu" class="popover" hidden></div>
+    </div>
+  </div>
+  <div class="sep"></div>
+  <div id="status">добавь фигуру или нарисуй эскиз</div>
+  <div class="tb">
     <select class="sm" id="lang" style="padding:4px 6px;font-size:12px">
       <option value="en">English</option>
       <option value="kk">Қазақша</option>
       <option value="ru">Русский</option>
     </select>
   </div>
-  <div class="sep"></div>
-  <div id="status">добавь фигуру или нарисуй эскиз</div>
 </header>
 
 <main>
@@ -187,18 +224,24 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
       <div class="hint" id="empty">пусто — добавь короб или нарисуй эскиз</div>
     </div>
     <div class="grp">
-      <h2>Проект</h2>
-      <div class="stack">
-        <div class="pair">
-          <button class="sm" id="save">Сохранить файл</button>
-          <button class="sm" id="open">Открыть</button>
-        </div>
-        <button class="sm" id="clear">Новый проект</button>
-        <button class="sm" id="history">История версий</button>
-        <div id="hist-box" hidden></div>
-      </div>
-      <div class="hint">Автосохранение в базу включено. База — <code>pen3d.db</code> рядом с сервером.</div>
+      <button class="sm" id="project-btn" style="width:100%">Проект ▾</button>
     </div>
+  </aside>
+
+  <div id="project-menu" class="popover fixed" hidden>
+    <div class="stack">
+      <div class="pair">
+        <button class="sm" id="save">Сохранить файл</button>
+        <button class="sm" id="open" title="Проект .pen3d.json или готовая модель .stl">Открыть</button>
+      </div>
+      <button class="sm" id="clear">Новый проект</button>
+      <button class="sm" id="history">История версий</button>
+      <div id="hist-box" hidden></div>
+    </div>
+    <div class="hint">Автосохранение в базу включено. База — <code>pen3d.db</code> рядом с сервером.</div>
+  </div>
+
+  <div id="printer-panel" hidden>
     <div class="grp">
       <h2>Принтер</h2>
       <div id="printer" class="pr">
@@ -216,7 +259,7 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
       <div class="stack">
         <label class="f">печатать <select id="plate-print" style="padding:2px 4px;font-size:12px">
           <option value="0">мой стол</option>
-          <option value="1">стол агента</option>
+          <option value="1" id="plate-agent-opt" hidden>стол агента</option>
         </select></label>
         <button id="estimate">Сколько уйдёт пластика</button>
         <div class="hint" id="est" hidden></div>
@@ -243,9 +286,12 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
         «молния» — минимум материала, гироид — прочнее при том же проценте.
         Поддержки строит слайсер (tree, порог 30°). Нужен <code>~/.pen3d.json</code> с IP, access code и serial принтера.</div>
     </div>
-  </aside>
+  </div>
 
   <div id="stage">
+    <button id="toggle-left" class="panel-toggle" title="Скрыть/показать левую панель">‹</button>
+    <button id="toggle-right" class="panel-toggle" title="Скрыть/показать правую панель">›</button>
+    <div id="pan-bar" title="Тяни — камера едет по плоскости стола"><i></i></div>
     <canvas id="view"></canvas>
     <div id="labels"></div>
     <div id="hud" hidden>
@@ -268,6 +314,8 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
       <button data-mode="scale" title="Менять размер (S)"><svg viewBox="0 0 24 24"><path d="M4 14v6h6"/><path d="M20 10V4h-6"/><path d="M20 4l-8 8"/><path d="M4 20l5-5"/></svg></button>
       <div class="hr"></div>
       <button class="on" id="snap" title="Привязка: шаг 1 мм и 15°"><svg viewBox="0 0 24 24"><path d="M9 3v18M15 3v18M3 9h18M3 15h18"/></svg></button>
+      <div class="hr"></div>
+      <button id="measure" title="Измерить расстояние между двумя точками (Esc — выйти)"><svg viewBox="0 0 24 24"><path d="M3 17L17 3"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/><circle cx="3" cy="17" r="1.6"/><circle cx="17" cy="3" r="1.6"/></svg></button>
     </div>
     <div class="views">
       <button class="icon" data-view="iso" title="1">3D</button>
@@ -282,28 +330,15 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
     <div class="grp">
       <h2>Добавить</h2>
       <div class="adds">
-        <button data-add="box">▭ Короб</button>
-        <button data-add="cyl">● Цилиндр</button>
-        <button data-add="poly">⬡ Призма</button>
-        <button data-add="sphere">◍ Шар</button>
-        <button data-add="cone">▲ Конус</button>
-        <button data-add="torus">◎ Кольцо</button>
-        <button data-add="wedge">◺ Клин</button>
-        <button data-add="thread">⌁ Резьба</button>
-        <button id="sketch" style="grid-column:1/-1">✎ Нарисовать эскиз</button>
-        <div id="gear-row" style="grid-column:1/-1">
-          <label class="f">зубьев <input id="g-z" type="number" min="6" max="200" step="1" value="17"></label>
-          <label class="f">модуль <input id="g-m" type="number" min="0.3" max="10" step="0.1" value="2"></label>
-          <button id="gear">⚙ Поставить шестерню</button>
-          <div class="hint" id="gear-hint"></div>
-          <div class="pair" style="margin-top:6px">
-            <label class="f">Ш <input id="r-w" type="number" min="4" step="1" value="60"></label>
-            <label class="f">Г <input id="r-d" type="number" min="4" step="1" value="40"></label>
-          </div>
-          <label class="f">радиус угла, мм <input id="r-r" type="number" min="0.5" step="0.5" value="8"></label>
-          <button id="rrect" title="прямоугольник со скруглёнными углами">◠ Скруглённая площадка</button>
-          <div class="hint" id="rrect-hint"></div>
-        </div>
+        <button data-add="box"><svg viewBox="0 0 24 24"><path d="M4 7l8-4 8 4-8 4-8-4z"/><path d="M4 7v10l8 4 8-4V7"/><path d="M12 11v10"/></svg>Короб</button>
+        <button data-add="cyl"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12a7 3 0 0 0 14 0V6"/></svg>Цилиндр</button>
+        <button data-add="poly"><svg viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/></svg>Призма</button>
+        <button data-add="sphere"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="9" ry="3.2"/></svg>Шар</button>
+        <button data-add="cone"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="18" rx="7" ry="3"/><path d="M12 3l7 15M12 3l-7 15"/></svg>Конус</button>
+        <button data-add="torus"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="9" ry="5"/><ellipse cx="12" cy="12" rx="3.6" ry="2"/></svg>Кольцо</button>
+        <button data-add="wedge"><svg viewBox="0 0 24 24"><path d="M3 19h18M3 19V9l16 4v6M3 9l16 4"/></svg>Клин</button>
+        <button data-add="thread"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M6.5 9c3 1 8-1 11 0M6.5 12c3 1 8-1 11 0M6.5 15c3 1 8-1 11 0"/></svg>Резьба</button>
+        <button id="sketch" style="grid-column:1/-1"><svg viewBox="0 0 24 24"><path d="M3 21l1-4.5L14.5 6l3.5 3.5L7.5 20 3 21z"/><path d="M13 7.5l3.5 3.5"/></svg>Нарисовать эскиз</button>
       </div>
     </div>
 
@@ -311,6 +346,47 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
       <button class="on" data-tab="props">Свойства</button>
       <button data-tab="ai">AI</button>
       <button data-tab="lib">Эскизы</button>
+      <button data-tab="gen" title="Шестерня, скруглённая площадка">Ген.</button>
+      <button data-tab="help" title="Управление">?</button>
+    </div>
+
+    <div class="tabpane" data-pane="gen" hidden>
+      <div class="grp">
+        <h2>Шестерня</h2>
+        <div class="stack">
+          <label class="f">зубьев <input id="g-z" type="number" min="6" max="200" step="1" value="17"></label>
+          <label class="f">модуль <input id="g-m" type="number" min="0.3" max="10" step="0.1" value="2"></label>
+          <button id="gear"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M4.6 6.6l2.1 2.1M17.3 15.3l2.1 2.1M2.5 12h3M18.5 12h3M4.6 17.4l2.1-2.1M17.3 8.7l2.1-2.1"/></svg>Поставить шестерню</button>
+          <div class="hint" id="gear-hint"></div>
+        </div>
+      </div>
+      <div class="grp">
+        <h2>Скруглённая площадка</h2>
+        <div class="stack">
+          <div class="pair">
+            <label class="f">Ш <input id="r-w" type="number" min="4" step="1" value="60"></label>
+            <label class="f">Г <input id="r-d" type="number" min="4" step="1" value="40"></label>
+          </div>
+          <label class="f">радиус угла, мм <input id="r-r" type="number" min="0.5" step="0.5" value="8"></label>
+          <button id="rrect" title="прямоугольник со скруглёнными углами"><svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="5"/></svg>Скруглённая площадка</button>
+          <div class="hint" id="rrect-hint"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tabpane" data-pane="help" hidden>
+      <div class="grp">
+      <h2>Управление</h2>
+      <div class="hint">
+        <kbd>ЛКМ</kbd> выбрать / вращать вид · <kbd>ПКМ</kbd> двигать вид · колесо — зум<br>
+        <kbd>G</kbd> <kbd>R</kbd> <kbd>S</kbd> — двигать / вращать / размер<br>
+        <kbd>1</kbd>–<kbd>4</kbd> — виды · <kbd>F</kbd> — приблизить к детали · <kbd>Esc</kbd> — снять выделение<br>
+        <kbd>⌘Z</kbd> <kbd>⇧⌘Z</kbd> — отмена / повтор · <kbd>⌘D</kbd> — дубль<br>
+        Эскиз: рисуй на столе, отпустил — фигура готова<br>
+        Резьбу масштабировать нельзя — меняй Ø и шаг в свойствах<br>
+        Наклон: <kbd>R</kbd> и тяни за красное/синее кольцо, либо поля ↕X / ↕Z
+      </div>
+      </div>
     </div>
 
     <div class="tabpane" data-pane="props">
@@ -328,23 +404,23 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
       <div class="grp">
         <h2>Размер, мм</h2>
         <div class="grid3">
-          <label class="f">Ш <input id="p-w" type="number" step="1" min="0.2"></label>
-          <label class="f">Г <input id="p-d" type="number" step="1" min="0.2"></label>
-          <label class="f">В <input id="p-h" type="number" step="1" min="0.2"></label>
+          <label class="f">Ш <input id="p-w" type="text" inputmode="decimal" step="1" min="0.2"></label>
+          <label class="f">Г <input id="p-d" type="text" inputmode="decimal" step="1" min="0.2"></label>
+          <label class="f">В <input id="p-h" type="text" inputmode="decimal" step="1" min="0.2"></label>
         </div>
       </div>
       <div class="grp">
         <h2>Положение, мм</h2>
         <div class="grid3">
-          <label class="f">X <input id="p-x" type="number" step="1"></label>
-          <label class="f">Y <input id="p-y" type="number" step="1"></label>
-          <label class="f">низ <input id="p-z" type="number" step="1"></label>
+          <label class="f">X <input id="p-x" type="text" inputmode="decimal" step="1"></label>
+          <label class="f">Y <input id="p-y" type="text" inputmode="decimal" step="1"></label>
+          <label class="f">низ <input id="p-z" type="text" inputmode="decimal" step="1"></label>
         </div>
         <div class="stack" style="margin-top:6px">
           <div class="grid3">
-            <label class="f">↻ <input id="p-rot" type="number" step="15" title="поворот вокруг вертикали"></label>
-            <label class="f">↕X <input id="p-rx" type="number" step="15" title="наклон вокруг X"></label>
-            <label class="f">↕Z <input id="p-rz" type="number" step="15" title="наклон вокруг Z"></label>
+            <label class="f">↻ <input id="p-rot" type="text" inputmode="decimal" step="15" title="поворот вокруг вертикали"></label>
+            <label class="f">↕X <input id="p-rx" type="text" inputmode="decimal" step="15" title="наклон вокруг X"></label>
+            <label class="f">↕Z <input id="p-rz" type="text" inputmode="decimal" step="15" title="наклон вокруг Z"></label>
           </div>
           <div class="alignrow">
             <span>выровнять</span>
@@ -352,15 +428,18 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
             <button class="sm" data-align="rot" title="поворот Y к 90°">Y</button>
             <button class="sm" data-align="rz" title="наклон Z к 90°">Z</button>
           </div>
-          <label class="f" id="p-sides-row">граней <input id="p-sides" type="number" step="1" min="3" max="64"></label>
-          <label class="f" id="p-shell-row">стенка, мм <input id="p-shell" type="number" step="0.5" min="0" value="0"></label>
+          <label class="f" id="p-sides-row">граней <input id="p-sides" type="text" inputmode="decimal" step="1" min="3" max="64"></label>
+          <label class="f" id="p-shell-row">стенка, мм <input id="p-shell" type="text" inputmode="decimal" step="0.5" min="0" value="0"></label>
           <label class="f chk" id="p-open-row">открыть сверху <input id="p-openTop" type="checkbox"></label>
-          <label class="f" id="p-dia-row">Ø резьбы <input id="p-dia" type="number" step="1" min="2"></label>
-          <label class="f" id="p-pitch-row">шаг, мм <input id="p-pitch" type="number" step="0.25" min="0.3"></label>
+          <label class="f" id="p-dia-row">Ø резьбы <input id="p-dia" type="text" inputmode="decimal" step="1" min="2"></label>
+          <label class="f" id="p-pitch-row">шаг, мм <input id="p-pitch" type="text" inputmode="decimal" step="0.25" min="0.3"></label>
+          <label class="f" id="p-round-row" title="скругление в плане — не полноценный fillet по рёбрам">
+            радиус угла, мм <input id="p-round" type="text" inputmode="decimal" step="0.5" min="0" value="0"></label>
         </div>
         <div class="acts">
           <button class="sm" id="center" title="совместить с центром детали">Центрировать</button>
           <button class="sm" id="drop" title="опустить деталь на стол">На стол</button>
+          <button class="sm" id="stack" title="поставить точно на верх ближайшего тела">Сверху на деталь</button>
           <button class="sm" id="group" title="связать деталь: все касающиеся тела поедут вместе">Сгруппировать</button>
         </div>
         <div class="stack" style="margin-top:6px">
@@ -390,19 +469,6 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
       </div>
     </div>
     <div class="hint" id="noprops">выбери объект в списке или кликни по нему в сцене</div>
-
-    <div class="grp">
-      <h2>Управление</h2>
-      <div class="hint">
-        <kbd>ЛКМ</kbd> выбрать / вращать вид · <kbd>ПКМ</kbd> двигать вид · колесо — зум<br>
-        <kbd>G</kbd> <kbd>R</kbd> <kbd>S</kbd> — двигать / вращать / размер<br>
-        <kbd>1</kbd>–<kbd>4</kbd> — виды · <kbd>F</kbd> — приблизить к детали · <kbd>Esc</kbd> — снять выделение<br>
-        <kbd>⌘Z</kbd> <kbd>⇧⌘Z</kbd> — отмена / повтор · <kbd>⌘D</kbd> — дубль<br>
-        Эскиз: рисуй на столе, отпустил — фигура готова<br>
-        Резьбу масштабировать нельзя — меняй Ø и шаг в свойствах<br>
-        Наклон: <kbd>R</kbd> и тяни за красное/синее кольцо, либо поля ↕X / ↕Z
-      </div>
-    </div>
     </div>
 
     <div class="tabpane" data-pane="ai" hidden>
@@ -472,7 +538,7 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
   </aside>
 </main>
 
-<input type="file" id="file" accept=".json" hidden>
+<input type="file" id="file" accept=".json,.stl" hidden>
 <input type="file" id="libfile" accept=".json" hidden>
 
 <script type="importmap">
@@ -485,3 +551,5 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
 </script>
 <script type="module" src="js/i18n.js"></script>
 <script type="module" src="js/app.js"></script>
+<script type="module" src="js/popovers-solid.js"></script>
+<script type="module" src="js/props-panel-solid.js"></script>
