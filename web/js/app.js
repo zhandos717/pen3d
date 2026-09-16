@@ -383,6 +383,22 @@ function download(blob, name){
   setTimeout(() => URL.revokeObjectURL(url), 30000);   // даём браузеру дописать файл
 }
 
+// Диалог "Сохранить как" выбираем один раз, дальше пишем в тот же файл молча —
+// экономит навигацию по папкам при повторном экспорте STL в слайсер.
+let stlFileHandle = null;
+async function saveStl(bytes, name){
+  if(!window.showSaveFilePicker) return download(new Blob([bytes], {type:'model/stl'}), name);
+  try{
+    if(!stlFileHandle) stlFileHandle = await window.showSaveFilePicker(
+      {suggestedName: name, types: [{description: 'STL', accept: {'model/stl': ['.stl']}}]});
+    const w = await stlFileHandle.createWritable();
+    await w.write(bytes); await w.close();
+  }catch(e){
+    stlFileHandle = null;
+    if(e.name !== 'AbortError') download(new Blob([bytes], {type:'model/stl'}), name);
+  }
+}
+
 // ---------- сохранение ----------
 // sync() дёргается на каждое движение гизмо, поэтому пишем в базу не чаще раза в 400 мс
 let saveTimer = null;
@@ -934,7 +950,7 @@ $('stl').onclick = async e => {
   const out = await stlBytes();
   done();
   if(!out) return;
-  download(new Blob([out], {type:'model/stl'}), 'pen3d.stl');
+  await saveStl(out, 'usta.stl');
   say('STL сохранён', 'ok');
 };
 async function toPrinter(path, btn, label){
