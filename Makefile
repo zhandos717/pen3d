@@ -25,7 +25,7 @@ run: venv        ## запустить редактор на http://127.0.0.1:87
 lan: venv        ## то же, но слушать всю локальную сеть (без авторизации!)
 	$(PY) bridge.py --lan
 
-check: check-db check-slicer check-i18n check-hinge  ## прогнать все проверки
+check: check-db check-slicer check-i18n check-hinge check-params check-templates check-preflight check-fillet check-material  ## прогнать все проверки
 
 check-db: venv   ## база: запись, чтение, удаление на временном файле
 	$(PY) db.py
@@ -39,8 +39,25 @@ check-i18n:      ## словарь переводов: перевод перев
 check-hinge:     ## петля: ребро не должно уезжать при повороте
 	node web/js/hinge.test.mjs
 
+check-params:    ## параметры: формулы тел пересчитываются, мусор не исполняется
+	node web/js/params.test.mjs
+	node web/js/fit.test.mjs
+
+check-material: venv  ## печать под нужный пластик: деталь под TPU не режется под PLA
+	$(PY) bridge.py --check-material
+
+check-fillet:     ## скругление рёбер: сетка замкнута, объём срезан ровно на четверти
+	node web/js/fillet.test.mjs
+
+check-preflight:  ## проверка перед печатью: ловит висящие тела, тонкие стенки, нависания
+	node web/js/preflight.test.mjs
+
+check-templates: venv  ## шаблоны вкладки «Шаблоны»: собираются и проходят check_scene
+	node web/js/templates.test.mjs .templates.json && $(PY) examples/build.py --check-json .templates.json; s=$$?; rm -f .templates.json; exit $$s
+
 examples: venv   ## пересобрать примеры в examples/ и проверить их печатаемость
 	$(PY) examples/build.py --write
+	node web/js/templates.test.mjs .templates.json examples/chekhol-iphone-16e.pen3d.json && $(PY) examples/build.py --check-json .templates.json; s=$$?; rm -f .templates.json; exit $$s
 
 vendor:          ## перекачать библиотеки в web/vendor по списку .sources
 	@cd web/vendor && while read -r p; do \

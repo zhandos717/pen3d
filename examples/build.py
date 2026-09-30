@@ -93,6 +93,9 @@ pulley = scene(
     hole(cyl('сквозное', 0, 0, -1, 9, 18)),
 )
 
+# Чехол для iPhone 16e собирается шаблоном редактора (web/js/templates.js), чтобы размеры
+# по чертежу Apple жили в одном месте: make examples пишет его через templates.test.mjs.
+
 CASES = [('korpus-platy', 'Корпус для платы 80×60×25', case),
          ('kronshtein-L', 'L-кронштейн с ребром жёсткости', brk),
          ('khomut-25', 'Хомут для трубы 25 мм', clamp),
@@ -100,6 +103,13 @@ CASES = [('korpus-platy', 'Корпус для платы 80×60×25', case),
          ('shkiv-608', 'Шкив под подшипник 608', pulley)]
 
 if __name__ == '__main__':
+    if '--check-json' in sys.argv:              # сборки шаблонов редактора (make check-templates)
+        scenes = json.load(open(sys.argv[sys.argv.index('--check-json') + 1]))
+        bad = [(sc['id'], sc['v'], p) for sc in scenes if (p := bridge.check_scene(sc['objects']))]
+        for b in bad:
+            print('   ·', *b)
+        print(f'шаблоны: {len(scenes)} сборок, с замечаниями {len(bad)}')
+        sys.exit(1 if bad else 0)
     os.makedirs(OUT, exist_ok=True)
     bad = 0
     for slug, title, sc in CASES:

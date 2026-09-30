@@ -57,6 +57,56 @@ export function prismGeo(pts){
   return g;
 }
 
+// Призма со скруглёнными верхним и нижним рёбрами: четверть окружности из seg ступеней.
+// Геометрия единичная, как у всех тел, поэтому радиус задан отдельно по плану (rp, в долях
+// размаха контура) и по высоте (rh, в долях высоты) — после масштаба меша это один радиус в мм.
+// Контур сжимается внутрь по нормалям вершин: для выпуклых и скруглённых контуров точно,
+// у глубоко вогнутых сжатие больше радиуса вогнутости вывернет контур — это ограничение.
+export function filletPrismGeo(pts, rp, rh, seg = 6){
+  const v = [];
+  for(const p of pts){
+    const l = v[v.length-1];
+    if(!l || Math.hypot(p[0]-l.x, p[1]-l.y) > 1e-4) v.push(new THREE.Vector2(p[0], p[1]));
+  }
+  while(v.length > 3 && v[0].distanceTo(v[v.length-1]) < 1e-4) v.pop();
+  if(v.length < 3) throw new Error('в контуре меньше трёх точек');
+  if(THREE.ShapeUtils.isClockWise(v)) v.reverse();
+  const n = v.length;
+  // внутренняя нормаль вершины — биссектриса нормалей соседних рёбер (контур против часовой)
+  const inward = v.map((p, i) => {
+    const a = v[(i + n - 1) % n], b = v[(i + 1) % n];
+    const e1 = p.clone().sub(a).normalize(), e2 = b.clone().sub(p).normalize();
+    const n1 = new THREE.Vector2(-e1.y, e1.x), n2 = new THREE.Vector2(-e2.y, e2.x);
+    const m = n1.clone().add(n2); const len = m.length();
+    if(len < 1e-6) return n1;
+    m.divideScalar(len);
+    return m.multiplyScalar(1 / Math.max(.3, m.dot(n1)));      // сохраняем расстояние до рёбер
+  });
+  const ring = k => v.map((p, i) => p.clone().addScaledVector(inward[i], k));
+  // кольца снизу вверх: нижняя четверть, прямой бок, верхняя четверть
+  const rings = [];
+  for(let s = seg; s >= 0; s--){ const f = s/seg*Math.PI/2; rings.push({r: ring(rp*(1 - Math.cos(f))), y: -.5 + rh*(1 - Math.sin(f))}); }
+  for(let s = 0; s <= seg; s++){ const f = s/seg*Math.PI/2; rings.push({r: ring(rp*(1 - Math.cos(f))), y: .5 - rh*(1 - Math.sin(f))}); }
+  const pos = [], P = (q, y) => pos.push(q.x, y, -q.y);
+  const top = rings[rings.length - 1], bot = rings[0];
+  const faces = THREE.ShapeUtils.triangulateShape(top.r, []);
+  for(const [a,b,c] of faces){ P(top.r[a], top.y); P(top.r[b], top.y); P(top.r[c], top.y); }
+  for(const [a,b,c] of faces){ P(bot.r[c], bot.y); P(bot.r[b], bot.y); P(bot.r[a], bot.y); }
+  for(let k = 0; k + 1 < rings.length; k++){
+    const A = rings[k], B = rings[k + 1];
+    if(Math.abs(A.y - B.y) < 1e-9 && A.r[0].equals(B.r[0])) continue;
+    for(let i = 0; i < n; i++){
+      const j = (i + 1) % n;
+      P(A.r[i], A.y); P(A.r[j], A.y); P(B.r[j], B.y);
+      P(A.r[i], A.y); P(B.r[j], B.y); P(B.r[i], B.y);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
 export function wedgeGeo(){
   // клин: прямоугольное основание, скат от задней стенки к передней кромке
   const p = [[-.5,-.5,-.5],[.5,-.5,-.5],[.5,-.5,.5],[-.5,-.5,.5],[-.5,.5,-.5],[.5,.5,-.5]];
@@ -109,5 +159,6 @@ export function unitGeo(o){
   if(o.type === 'cyl' || o.type === 'poly')
     return new THREE.CylinderGeometry(.5,.5,1, o.type === 'cyl' ? 48 : o.sides, 1, false,
                                       o.type === 'poly' ? Math.PI/o.sides : 0);
+  if(o.edge > 0) return filletPrismGeo(o.pts, o.edge / o.w, o.edge / o.h);
   return prismGeo(o.pts);   // sketch: контур нормализован в [-0.5,0.5]
 }

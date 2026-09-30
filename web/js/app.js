@@ -8,6 +8,10 @@ import { meshToStlAsync } from './stl.js';
 import { PROMPT, PROVIDERS, sanitize } from './ai.js';
 import { gearSketch, roundedRect } from './gear.js';
 import { t } from './i18n.js';
+import { preflight } from './preflight.js';
+import { TEMPLATES, defaults as tplDefaults, clampValues } from './templates.js';
+import { FITS, DEFAULT_CAL, gapFor, couponObjects, COUPON_GAPS } from './fit.js';
+import { evalExpr, paramValues, applyParams, refsParam, usersOf, idents, NAME_RE, JS_RESERVED } from './params.js';
 
 const BED = 256;
 const PLATE_GAP = 320;                 // сдвиг стола агента по X
@@ -16,18 +20,30 @@ const say = (t, k='') => { const s = $('status'); s.textContent = t; s.className
 
 // ---------- данные ----------
 // объект: {id,name,type:'box'|'cyl'|'poly'|'sketch',x,y,z,w,d,h,rot,sides,hole,vis,pts?}
-let objects = [], nextId = 1, selId = null;
+let objects = [], nextId = 1, selId = null, params = [];
 const byId = id => objects.find(o => o.id === id);
+// калибровка посадок — свойство принтера, а не проекта: живёт в браузере
+let fitCal = +localStorage.fitCal || DEFAULT_CAL;
+const gap = o => gapFor(o, fitCal);
+// резьбу строит геометрия по диаметру, остальное — масштабом меша
+const geoOf = o => o.type === 'thread' && gap(o) ? {...o, dia: o.dia + gap(o)} : o;
 const sel = () => byId(selId);
 
 // ---------- сцена ----------
 const view = $('view');
 const renderer = new THREE.WebGLRenderer({canvas:view, antialias:true});
 renderer.setPixelRatio(devicePixelRatio || 1);
-const scene = new THREE.Scene(); scene.background = new THREE.Color(0x111318);
+// тема следует за системой: тёмная только при тёмном режиме macOS
+const darkMq = matchMedia('(prefers-color-scheme: dark)');
+const SCENE_THEME = {
+  dark:  {bg:0x111318, ground:0x2a2f3a, grid:0x3a4150, grid2:0x262b35, g5:0x4a5262, g1:0x565f70, cold:0x1a222e, hot:0x33231e},
+  light: {bg:0xe6e9ee, ground:0xb9c0ca, grid:0xa9b2be, grid2:0xc6ccd4, g5:0x98a2af, g1:0x8a94a2, cold:0xcdd5df, hot:0xecd3c6},
+};
+const theme = () => SCENE_THEME[darkMq.matches ? 'dark' : 'light'];
+const scene = new THREE.Scene(); scene.background = new THREE.Color(theme().bg);
 const cam = new THREE.PerspectiveCamera(45, 1, 1, 5000);
 cam.position.set(220, 200, 260);
-scene.add(new THREE.HemisphereLight(0xffffff, 0x2a2f3a, 2.0));
+const hemi = new THREE.HemisphereLight(0xffffff, theme().ground, 2.0); scene.add(hemi);
 const keyLight = new THREE.DirectionalLight(0xffffff, 1.4); keyLight.position.set(1,2,1); scene.add(keyLight);
 const fillLight = new THREE.DirectionalLight(0xffffff, .5); fillLight.position.set(-1,1,-1); scene.add(fillLight);
 
@@ -36,10 +52,11 @@ function makePlate(offset, tint){
   const b = new THREE.Mesh(new THREE.PlaneGeometry(BED, BED),
     new THREE.MeshStandardMaterial({color:tint, roughness:1}));
   b.rotation.x = -Math.PI/2; b.position.y = -0.05; g.add(b);
-  const grid = new THREE.GridHelper(BED, BED/10, 0x3a4150, 0x262b35); g.add(grid);
-  const g5 = new THREE.GridHelper(BED, BED/50, 0x4a5262, 0x4a5262); g5.position.y = .02; g.add(g5);
+  const T = theme();
+  const grid = new THREE.GridHelper(BED, BED/10, T.grid, T.grid2); g.add(grid);
+  const g5 = new THREE.GridHelper(BED, BED/50, T.g5, T.g5); g5.position.y = .02; g.add(g5);
   // деления по 1мм — включаются только при сильном приближении, иначе на весь стол это муар
-  const g1 = new THREE.GridHelper(BED, BED, 0x565f70, 0x565f70); g1.position.y = .03; g1.visible = false; g.add(g1);
+  const g1 = new THREE.GridHelper(BED, BED, T.g1, T.g1); g1.position.y = .03; g1.visible = false; g.add(g1);
   const h = BED/2, y = .06;
   const edge = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(
     [[-h,y,-h],[h,y,-h],[h,y,h],[-h,y,h]].map(q => new THREE.Vector3(...q))),
@@ -69,10 +86,23 @@ let bedNow = null;                             // фактическая тем�
 
 function bedColor(temp, active){
   const k = Math.max(0, Math.min(1, ((temp ?? 25) - 25) / 75));   // 25° → 0, 100° → 1
-  const cold = new THREE.Color(0x1a222e), hot = new THREE.Color(0x33231e);
-  const c = cold.clone().lerp(hot, k);
-  return active ? c.multiplyScalar(1.15) : c.multiplyScalar(.7);
+  const T = theme(), c = new THREE.Color(T.cold).lerp(new THREE.Color(T.hot), k);
+  if(darkMq.matches) return active ? c.multiplyScalar(1.15) : c.multiplyScalar(.7);
+  return active ? c : c.lerp(new THREE.Color(T.bg), .5);     // на светлом неактивный стол бледнеет, а не темнеет
 }
+
+// GridHelper красит линии вершинными цветами — перекрашиваем атрибут, а не материал
+function paintGrid(grid, center, rest){
+  const col = grid.geometry.attributes.color, a = new THREE.Color(center), b = new THREE.Color(rest);
+  for(let i = 0; i < col.count; i++){ const c = i < 4 ? a : b; col.setXYZ(i, c.r, c.g, c.b); }
+  col.needsUpdate = true;
+}
+darkMq.addEventListener('change', () => {
+  const T = theme();
+  scene.background.set(T.bg); hemi.groundColor.set(T.ground);
+  plates.forEach(p => { paintGrid(p.grid, T.grid, T.grid2); paintGrid(p.g5, T.g5, T.g5); paintGrid(p.g1, T.g1, T.g1); });
+  markPlates();
+});
 
 function plateTemp(){
   return bedNow ?? PLATE_TEMP[$('bed')?.value] ?? 60;
@@ -82,6 +112,7 @@ function plateTemp(){
 function updatePlateOption(){
   const has = agentBusy || objects.some(o => o.plate);
   $('plate-agent-opt').hidden = !has;
+  plates[1].group.visible = has;          // стол агента появляется, только когда на нём что-то есть
   if(!has && printPlate() === 1) $('plate-print').value = '0';
 }
 
@@ -163,13 +194,15 @@ let dragged = false;
 gizmo.addEventListener('dragging-changed', e => { orbit.enabled = !e.value && !sketching; if(e.value) dragged = true; else gizmoDone(); });
 gizmo.addEventListener('objectChange', () => {
   const o = sel(); if(!o) return;
-  const was = {x:o.x, y:o.y, z:o.z};
+  const was = {...o};
   meshToObj(o); objToMesh(o, meshOf(o.id));
+  for(const k in o.f || {}) if(Math.abs(o[k] - was[k]) > .05) setFormula(o, k);   // meshToObj округляет — мелочь не считаем правкой
   if(o.grp && gizmo.getMode() === 'translate'){
     const dx = o.x - was.x, dy = o.y - was.y, dz = o.z - was.z;
     objects.forEach(x => {
       if(x.grp !== o.grp || x === o) return;
       x.x = +(x.x + dx).toFixed(2); x.y = +(x.y + dy).toFixed(2); x.z = +(x.z + dz).toFixed(2);
+      ['x', 'y', 'z'].forEach(k => setFormula(x, k));
       const m = meshOf(x.id); if(m) objToMesh(x, m);
     });
   }
@@ -179,7 +212,7 @@ gizmo.addEventListener('objectChange', () => {
 const raw = new THREE.Group(); scene.add(raw);
 // тёмная обводка на каждом теле — иначе однотонные тела впритык сливаются в одно пятно
 const EDGE_MAT = new THREE.LineBasicMaterial({color:0x0a0e12, transparent:true, opacity:.55});
-let resultMesh = null, showResult = false;
+let resultMesh = null, showResult = false, overhangMesh = null;
 
 const matCache = new Map();
 function solidMat(color){
@@ -203,7 +236,7 @@ function updateGhost(){
   // keep-тела не материал, а маска обрезки — в расчёт погружения не берём
   const solids = objects.filter(x => x.vis && !x.hole && x.mode !== 'keep' && (x.plate || 0) === (o.plate || 0));
   let res = null;
-  try{ res = holeGhost(o, solids, (q, m) => objToMesh(q, m), GHOST); }
+  try{ res = holeGhost(geoOf(o), solids, (q, m) => objToMesh(q, m), GHOST); }
   catch(e){ return; }
   if(!res){ ghostDepth = null; return; }
   ghost = new THREE.Group();
@@ -230,7 +263,7 @@ const MAT = {
 function objToMesh(o, m){
   m.position.set(o.x + (o.plate ? PLATE_GAP : 0), o.z + o.h/2, o.y);
   if(o.type === 'thread'){ m.scale.set(1,1,1); o.w = o.d = o.dia; }
-  else m.scale.set(o.w, o.h, o.d);
+  else m.scale.set(o.w + gap(o), o.h, o.d + gap(o));
   m.rotation.set(THREE.MathUtils.degToRad(o.rx || 0), THREE.MathUtils.degToRad(o.rot),
                  THREE.MathUtils.degToRad(o.rz || 0), 'YXZ');
   m.material = o.hole ? MAT.hole : solidMat(o.color);
@@ -245,9 +278,9 @@ function meshToObj(o){
     o.rot = +(((THREE.MathUtils.radToDeg(m.rotation.y) % 360) + 360) % 360).toFixed(1);
     m.position.y = o.z + o.h/2; m.scale.set(1,1,1); return;
   }
-  o.w = +Math.max(.2, Math.abs(m.scale.x)).toFixed(2);
+  o.w = +Math.max(.2, Math.abs(m.scale.x) - gap(o)).toFixed(2);
   o.h = +Math.max(.2, Math.abs(m.scale.y)).toFixed(2);
-  o.d = +Math.max(.2, Math.abs(m.scale.z)).toFixed(2);
+  o.d = +Math.max(.2, Math.abs(m.scale.z) - gap(o)).toFixed(2);
   o.x = +(m.position.x - (o.plate ? PLATE_GAP : 0)).toFixed(2); o.y = +m.position.z.toFixed(2);
   const deg = r => +(((THREE.MathUtils.radToDeg(r) % 360) + 360) % 360).toFixed(1);
   o.rot = deg(m.rotation.y); o.rx = deg(m.rotation.x); o.rz = deg(m.rotation.z);
@@ -262,7 +295,7 @@ function meshToObj(o){
 const meshOf = id => raw.children.find(m => m.userData.id === id);
 const kill = m => { m.geometry?.dispose(); m.children.forEach(c => c.geometry?.dispose()); m.parent?.remove(m); };
 const sig = o => o.type === 'poly' ? 'poly:' + o.sides
-  : o.type === 'sketch' ? 'sketch:' + JSON.stringify(o.pts)
+  : o.type === 'sketch' ? 'sketch:' + JSON.stringify(o.pts) + (o.edge > 0 ? `:${o.edge}:${o.w}:${o.h}` : '')   // скругление в единичной геометрии зависит от пропорций
   : o.type === 'thread' ? `thread:${o.dia}:${o.pitch}:${o.h}`
   : o.type === 'stl' ? 'stl:' + o.id            // точки импорта неизменны — не перестраивать зря
   : o.type;
@@ -273,10 +306,10 @@ function sync(){
   [...raw.children].forEach(m => { if(!ids.has(m.userData.id)) kill(m); });
   objects.forEach(o => {
     let m = meshOf(o.id);
-    if(!m || m.userData.sig !== sig(o)){
+    if(!m || m.userData.sig !== sig(geoOf(o))){
       if(m) kill(m);
-      let g; try{ g = unitGeo(o); }catch(e){ g = new THREE.BoxGeometry(1,1,1); say('контур эскиза не строится, заменён коробом', 'err'); }
-      m = new THREE.Mesh(g); m.userData = {id:o.id, sig:sig(o)}; raw.add(m);
+      let g; try{ g = unitGeo(geoOf(o)); }catch(e){ g = new THREE.BoxGeometry(1,1,1); say('контур эскиза не строится, заменён коробом', 'err'); }
+      m = new THREE.Mesh(g); m.userData = {id:o.id, sig:sig(geoOf(o))}; raw.add(m);
       // рёбра — ребёнок меша: масштаб/поворот/позиция подхватываются сами, отдельно не синхронизируем
       const edgeGeo = o.type === 'stl' ? null : new THREE.EdgesGeometry(g, 25);   // импорт STL — своя плотная сетка, обводка была бы мусором
       if(edgeGeo){
@@ -289,7 +322,8 @@ function sync(){
   });
   const s = sel();
   if(s && s.vis && !showResult && !sketching) gizmo.attach(meshOf(s.id)); else gizmo.detach();
-  renderList(); fillProps(); updateDims(); updateGhost();
+  renderList(); renderParams(); fillProps(); updateDims(); updateGhost();
+  if(overhangMesh){ clearOverhang(); $('pre').hidden = true; }   // после правки результат проверки устарел
   if(showResult) rebuildSoon();
   persist();
 }
@@ -307,7 +341,7 @@ function rebuildSoon(){
 function rebuild(){
   clearTimeout(rebuildTimer);
   if(resultMesh){ kill(resultMesh); resultMesh = null; }
-  try{ resultMesh = buildResult(objects.filter(o => (o.plate || 0) === printPlate()),
+  try{ resultMesh = buildResult(objects.filter(o => (o.plate || 0) === printPlate()).map(geoOf),
                                 (o,b) => objToMesh({...o, plate: printPlate()}, b), MAT.result); }
   catch(e){ showResult = false; $('result').classList.remove('on'); say('не удалось собрать: ' + e.message, 'err'); sync(); return; }
   if(resultMesh) scene.add(resultMesh);
@@ -328,7 +362,7 @@ try{
   if(saved){ hist.push(...saved.hist); redoStack.push(...saved.redo); }
 }catch(e){}
 const saveHist = () => { try{ localStorage.hist = JSON.stringify({hist, redo: redoStack}); }catch(e){} };
-const snapshot = () => JSON.stringify({objects, nextId});
+const snapshot = () => JSON.stringify({objects, nextId, params});
 // push() — состояние ДО изменения; вызывать перед мутацией objects
 function push(){ hist.push(snapshot()); if(hist.length > 100) hist.shift(); redoStack.length = 0; saveHist(); }
 // Неполный объект (чужой или старый файл проекта) давал NaN в габаритах и матрицах,
@@ -345,7 +379,8 @@ const fill = o => {
 function restore(s){
   const d = typeof s === 'string' ? JSON.parse(s) : s;   // из истории приходит строка, из базы — объект
   if(!Array.isArray(d?.objects)) throw new Error('битый файл проекта');
-  objects = d.objects.map(fill); nextId = +d.nextId || Math.max(0, ...objects.map(o => o.id)) + 1;
+  objects = d.objects.map(fill); params = Array.isArray(d.params) ? d.params : [];
+  nextId = +d.nextId || Math.max(0, ...objects.map(o => o.id)) + 1;
   if(!byId(selId)) selId = null;
   sync();
 }
@@ -439,7 +474,7 @@ $('file').onchange = async e => {
   e.target.value = '';
 };
 $('clear').onclick = () => { if(!objects.length) return; if(!confirm('Очистить проект?')) return;
-  push(); objects = []; selId = null; nextId = 1; sync(); say('новый проект'); };
+  push(); objects = []; params = []; selId = null; nextId = 1; sync(); say('новый проект'); };
 
 // ---------- объекты ----------
 // новую фигуру ставим справа от того, что уже на столе, а не поверх него
@@ -480,12 +515,12 @@ $('hud-group').onclick = () => $('group').click();
 
 $('dup').onclick = () => { const o = sel(); if(!o) return;
   push();
-  const c = {...o, id: nextId++, name: o.name + ' копия', x: o.x + 10, y: o.y + 10, pts: o.pts && o.pts.map(p => p.slice())};
+  const c = {...o, id: nextId++, name: o.name + ' копия', x: o.x + 10, y: o.y + 10, pts: o.pts && o.pts.map(p => p.slice()), f: o.f && {...o.f}};
   objects.push(c); selId = c.id; sync(); say('дубль: ' + c.name); };
 
 // Копия тела: pts копируем поштучно, иначе обе фигуры будут делить один контур
 // и правка одной молча поменяет вторую.
-const copyOf = (o, extra) => ({...o, id: nextId++, pts: o.pts && o.pts.map(p => p.slice()), ...extra});
+const copyOf = (o, extra) => ({...o, id: nextId++, pts: o.pts && o.pts.map(p => p.slice()), f: o.f && {...o.f}, ...extra});
 
 // Зеркало. Отражаем координату и разворот; у эскиза переворачиваем сам контур,
 // иначе получится копия, а не зеркальная деталь.
@@ -577,26 +612,33 @@ document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
   document.querySelectorAll('.tabpane').forEach(p => p.hidden = p.dataset.pane !== b.dataset.tab);
 });
 const showTab = t => document.querySelector(`.tabs button[data-tab="${t}"]`).click();
+$('help-btn').onclick = () => { document.querySelector('aside.right').classList.remove('collapsed'); showTab('help'); };
 
 // ---------- свойства ----------
-const P = ['name','hole','keep','vis','color','w','d','h','x','y','z','rot','rx','rz','sides','dia','pitch','shell','openTop','hinge'];
-const NUM_FIELDS = new Set(['w','d','h','x','y','z','rot','rx','rz','sides','dia','pitch','shell']);
-// поля размеров/позиции принимают выражения (w/2+3), не только число — считаем сами,
-// а не через eval: разрешаем только цифры/операторы/скобки и уже известные имена переменных
-function evalExpr(str, scope){
-  str = String(str).trim();
-  if(!/^[-+*/().\s\d]*$/.test(str.replace(/[a-zA-Z]+/g, ''))) return NaN;
-  const names = Object.keys(scope);
-  for(const w of str.match(/[a-zA-Z]+/g) || []) if(!names.includes(w)) return NaN;
-  try{ return Function(...names, `"use strict"; return (${str || '0'})`)(...names.map(n => scope[n])); }
-  catch(e){ return NaN; }
-}
+const P = ['name','hole','keep','vis','color','w','d','h','x','y','z','rot','rx','rz','sides','dia','pitch','shell','openTop','hinge','fit','edge'];
+const NUM_FIELDS = new Set(['w','d','h','x','y','z','rot','rx','rz','sides','dia','pitch','shell','edge']);
 // сама отрисовка формы — в solid/props-panel.js (SolidJS), тут только источник данных
 // петля не в списке полей solid-панели, поэтому её значение подставляем сами
 function fillProps(){
   const o = sel(); window.__propsPanel?.update(o);
   if(!o) return;
+  NUM_FIELDS.forEach(k => {
+    const el = $('p-' + k), f = o.f?.[k];
+    if(!el) return;
+    el.classList.toggle('fx', !!f);
+    el.title = f ? `= ${o[k]} (формула от параметров)` : '';
+    if(document.activeElement !== el) el.value = f || o[k];
+  });
   $('p-hinge').value = o.hinge || '';
+  $('p-fit').value = o.fit || '';
+  $('p-edge-row').style.display = (o.type === 'sketch' || o.type === 'box') && !o.hole ? '' : 'none';
+  $('p-fit-row').style.display = o.hole ? '' : 'none';
+  const g = gap(o), size = o.type === 'thread' ? o.dia : o.w;
+  $('p-fit-info').hidden = !o.hole;
+  $('p-fit-info').textContent = !o.hole ? ''
+    : g ? `в модели ${size} мм, печатается ${+(size + g).toFixed(2)} (зазор +${g} под твой принтер)`
+    : o.fit ? 'натяг при текущей калибровке — без зазора'
+    : 'отверстие напечатается уже заданного — для вала выбери посадку';
   const n = o.grp ? objects.filter(x => x.grp === o.grp).length : 0;
   $('grp-status').textContent = n ? `⛓ в группе из ${n} тел — двигаются вместе` : 'не связана ни с чем';
   $('ungroup').style.display = n ? '' : 'none';
@@ -629,36 +671,227 @@ $('p-round').onchange = () => {
   push(); Object.assign(o, {type:'sketch', pts:g.pts, w:g.size, d:g.size, round:g.r, roundW:w, roundD:d});
   sync(); say(`угол скруглён: R${g.r.toFixed(1)}`, 'ok');
 };
+function clampField(k, v, o, warn = () => {}){
+  if(k === 'sides') v = Math.max(3, Math.min(64, Math.round(v)));
+  if(k === 'dia') v = Math.max(2, v);
+  if(k === 'pitch') v = Math.max(.3, Math.min(v, 5));
+  if(k === 'shell'){
+    v = Math.max(0, v);
+    const lim = +(Math.min(o.w, o.d, o.h)/2 - .2).toFixed(1);
+    if(v > 0 && v < .8){ warn('стенка тоньше 0.8 мм — печатать нечем, поднял до 0.8', 'err'); v = .8; }
+    if(v > lim){ warn(`стенка не может быть толще ${lim} мм для этой детали`, 'err'); v = Math.max(0, lim); }
+    if(v > 0 && !o.shell) o.openTop = true;     // закрытая полость = мостик через всю деталь
+  }
+  if('wdh'.includes(k)) v = Math.max(.2, v);
+  if(k === 'z') v = o.hole ? v : Math.max(0, v);
+  if(k === 'rot' || k === 'rx' || k === 'rz') v = ((v % 360) + 360) % 360;
+  if(k === 'edge'){
+    const lim = +(Math.min(o.h/2, o.type === 'box' ? Math.min(o.w, o.d)/2 : o.round ?? o.w/2) - .05).toFixed(2);
+    if(v > lim){ warn(`скругление рёбер не больше ${lim} мм для этой детали`, 'err'); v = lim; }
+    v = Math.max(0, v);
+  }
+  return v;
+}
+// формулу держим, только пока она ссылается на параметр; ручное число её снимает
+function setFormula(o, k, expr){
+  if(expr){ o.f = {...o.f, [k]: expr}; return; }
+  if(!o.f?.[k]) return;
+  delete o.f[k]; if(!Object.keys(o.f).length) delete o.f;
+}
 P.forEach(k => {
   const el = $('p-' + k);
   el.onchange = () => { const o = sel(); if(!o) return;
-    let v = el.type === 'checkbox' ? el.checked : NUM_FIELDS.has(k) ? evalExpr(el.value, o) : el.value.trim();
-    if(NUM_FIELDS.has(k) && !Number.isFinite(v)){ say('не считается: ' + el.value, 'err'); el.value = o[k]; return; }
+    const raw = el.value.trim();
+    let v = el.type === 'checkbox' ? el.checked : NUM_FIELDS.has(k) ? evalExpr(raw, {...o, ...paramValues(params).vals}) : raw;
+    if(NUM_FIELDS.has(k) && !Number.isFinite(v)){ say('не считается: ' + el.value, 'err'); fillProps(); return; }
+    const selfRef = idents(raw).some(w => NUM_FIELDS.has(w));
+    const formula = NUM_FIELDS.has(k) && refsParam(raw, params) && !selfRef ? raw : undefined;
+    if(NUM_FIELDS.has(k) && refsParam(raw, params) && selfRef)
+      say('формула с полями тела считается один раз и не следит за параметрами — пиши только параметры', 'err');
     if(k === 'keep'){ push(); o.mode = v ? 'keep' : undefined; sync(); return; }
-    if(k === 'color'){ o.color = v; sync(); persist(); return; }
-    if(k === 'sides') v = Math.max(3, Math.min(64, Math.round(v)));
-    if(k === 'dia') v = Math.max(2, v);
-    if(k === 'pitch') v = Math.max(.3, Math.min(v, 5));
-    if(k === 'shell'){
-      v = Math.max(0, v);
-      const lim = +(Math.min(o.w, o.d, o.h)/2 - .2).toFixed(1);
-      if(v > 0 && v < .8){ say('стенка тоньше 0.8 мм — печатать нечем, поднял до 0.8', 'err'); v = .8; }
-      if(v > lim){ say(`стенка не может быть толще ${lim} мм для этой детали`, 'err'); v = Math.max(0, lim); }
-      if(v > 0 && !o.shell) o.openTop = true;     // закрытая полость = мостик через всю деталь
+    // у короба скругляются и углы в плане тем же радиусом — иначе на острых вертикальных
+    // рёбрах сходились бы скруглённые верх и низ; короб становится скруглённым эскизом
+    if(k === 'edge' && o.type === 'box' && v > 0){
+      const g = roundedRect(o.w, o.d, v);
+      push(); Object.assign(o, {type:'sketch', pts:g.pts, round:g.r, roundW:o.w, roundD:o.d, w:g.size, d:g.size, edge:v});
+      sync(); say(`рёбра и углы скруглены: R${v}`, 'ok'); return;
     }
-    if('wdh'.includes(k)) v = Math.max(.2, v);
-    if(k === 'z') v = o.hole ? v : Math.max(0, v);
-    if(k === 'rot' || k === 'rx' || k === 'rz') v = ((v % 360) + 360) % 360;
+    if(k === 'color'){ o.color = v; sync(); persist(); return; }
+    if(NUM_FIELDS.has(k)) v = clampField(k, v, o, say);
     if(k === 'name' && !v) return;
-    if(o[k] === v) return;
+    if(o[k] === v && (o.f?.[k]) === formula) return;
     push();
+    setFormula(o, k, formula);
     if(o.grp && 'xyz'.includes(k) && k.length === 1){
       const d = v - o[k];
-      objects.forEach(x => { if(x.grp === o.grp && x !== o) x[k] = +(x[k] + d).toFixed(2); });
+      objects.forEach(x => { if(x.grp === o.grp && x !== o){ x[k] = +(x[k] + d).toFixed(2); setFormula(x, k); } });
     }
     if(k === 'rot' || k === 'rx' || k === 'rz') turn(o, k, v); else o[k] = v;
     sync(); };
 });
+
+// ---------- шаблоны ----------
+// последние значения полей помним по шаблону: второй чехол чаще всего как первый
+const tplSaved = id => { try{ return JSON.parse(localStorage['tpl-' + id] || '{}'); }catch(e){ return {}; } };
+const curTpl = () => TEMPLATES.find(t => t.id === $('tpl-pick').value) || TEMPLATES[0];
+function renderTpl(){
+  const tpl = curTpl(), v = clampValues(tpl, {...tplDefaults(tpl), ...tplSaved(tpl.id)});
+  $('tpl-hint').textContent = tpl.hint;
+  $('tpl-fields').innerHTML = tpl.fields.map(f => f.type === 'check'
+    ? `<label class="f chk">${esc(f.label)} <input type="checkbox" data-k="${f.k}"${v[f.k] ? ' checked' : ''}></label>`
+    : f.type === 'select'
+    ? `<label class="f col">${esc(f.label)} <select data-k="${f.k}">${f.options.map(([k, n]) =>
+        `<option value="${k}"${k === v[f.k] ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select></label>`
+    : `<label class="f">${esc(f.label)} <input type="text" inputmode="decimal" data-k="${f.k}" value="${v[f.k]}"></label>`).join('');
+  $('tpl-fields').querySelectorAll('input[type=text]').forEach(el => el.onkeydown = e => {
+    if(e.key === 'Enter') $('tpl-add').click(); e.stopPropagation(); });
+}
+function tplValues(){
+  const raw = {};
+  $('tpl-fields').querySelectorAll('[data-k]').forEach(el => {
+    raw[el.dataset.k] = el.type === 'checkbox' ? el.checked : el.tagName === 'SELECT' ? el.value : evalExpr(el.value, paramValues(params).vals);
+  });
+  return raw;
+}
+$('tpl-pick').innerHTML = TEMPLATES.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
+$('tpl-pick').value = localStorage.tplPick || TEMPLATES[0].id;
+$('tpl-pick').onchange = () => { localStorage.tplPick = $('tpl-pick').value; renderTpl(); };
+$('tpl-add').onclick = () => {
+  const tpl = curTpl(), raw = tplValues(), v = clampValues(tpl, raw);
+  const fixed = tpl.fields.filter(f => !f.type && Number.isFinite(raw[f.k]) && raw[f.k] !== v[f.k]);
+  try{ localStorage['tpl-' + tpl.id] = JSON.stringify(v); }catch(e){}
+  const list = tpl.build(v);
+  const xs = list.filter(o => !o.hole), w = Math.max(...xs.map(o => Math.abs(o.x) + o.w/2))*2,
+        d = Math.max(...xs.map(o => Math.abs(o.y) + o.d/2))*2;
+  const at = freeSpot({w, d}), grp = 'tpl' + nextId;
+  push();
+  const first = nextId;
+  list.forEach(o => objects.push({...o, id: nextId++, x: +(o.x + at.x).toFixed(3), y: +(o.y + at.y).toFixed(3), grp}));
+  selId = first; sync(); renderTpl();
+  say(`${tpl.name}: ${list.length} тел на столе` +
+      (fixed.length ? ` · поправлено под допустимое: ${fixed.map(f => f.label.split(',')[0]).join(', ')}` : ''),
+      fixed.length ? 'err' : 'ok');
+};
+renderTpl();
+
+// ---------- посадки ----------
+// схема тестовой пластинки: клик по отверстию = «штырь сел здесь»; зазоры на схеме
+// преувеличены, чтобы разница читалась глазом, а не в масштабе
+function renderFit(){
+  const cal = localStorage.fitCal ? fitCal : null, step = 36, x0 = 26;
+  const holes = COUPON_GAPS.map((g, i) => {
+    const on = cal !== null && Math.abs(g - cal) < 1e-6, cx = x0 + i*step, r = 10 + g*6;
+    return `<g class="h${on ? ' on' : ''}" data-g="${g}" role="radio" tabindex="0" aria-checked="${on}"
+              aria-label="отверстие ${i + 1}, зазор ${g.toFixed(1)} мм">
+      <circle class="bore" cx="${cx}" cy="22" r="${r}"/>${on ? `<circle class="peg" cx="${cx}" cy="22" r="9"/>` : ''}
+      <text x="${cx}" y="52">+${g.toFixed(1)}</text></g>`;
+  }).join('');
+  $('fit-plate').innerHTML = `<svg viewBox="0 0 226 56">
+    <rect class="plate" x="4" y="4" width="218" height="36" rx="4"/>
+    <path class="mark" d="M8 36 l5 -7 l5 7z"/>${holes}</svg>`;
+  $('fit-plate').querySelectorAll('.h').forEach(h => {
+    const pick = () => setFitCal(+h.dataset.g);
+    h.onclick = pick;
+    h.onkeydown = e => { if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); pick(); } e.stopPropagation(); };
+  });
+  $('fit-cal').className = cal === null ? 'dflt' : '';
+  $('fit-cal').textContent = cal === null
+    ? `Пока без теста: зазор +${fitCal} мм по умолчанию`
+    : `Плотная посадка на твоём принтере: +${fitCal} мм к диаметру`;
+}
+function setFitCal(g){
+  fitCal = g; localStorage.fitCal = g;
+  renderFit(); sync();
+  const n = objects.filter(o => o.hole && o.fit).length;
+  say(`калибровка сохранена: +${g} мм` + (n ? `, отверстий пересчитано: ${n}` : ''), 'ok');
+  $('fit-plate').querySelector('.h.on')?.focus();
+}
+$('fit-coupon').onclick = () => {
+  const list = couponObjects(freeSpot({w: 90, d: 40}));
+  push();
+  const grp = 'fit' + nextId;
+  list.forEach((o, i) => objects.push({...o, id: nextId++, grp: i < list.length - 1 ? grp : undefined}));
+  selId = objects[objects.length - list.length].id; sync(); showTab('props');
+  say('пластинка на столе, результат отметь в ƒx', 'ok');
+};
+renderFit();
+
+// ---------- параметры ----------
+const RESERVED = new Set([...P, 'id', 'type', 'grp', 'plate', 'mode', 'f', 'pts', 'PI', 'sqrt', 'min', 'max',
+                          'round', 'floor', 'ceil', 'abs', 'sin', 'cos', 'tan']);
+// пересчёт после любой правки параметров: клампы те же, что у ручного ввода
+function reapply(){
+  const bad = applyParams(objects, params, (o, k, v) => {
+    v = +clampField(k, v, o).toFixed(3);
+    if(o[k] === v) return;
+    if(o.grp && 'xyz'.includes(k)){
+      const d = v - o[k];
+      objects.forEach(x => { if(x.grp === o.grp && x !== o){ x[k] = +(x[k] + d).toFixed(2); setFormula(x, k); } });
+    }
+    if(k === 'rot' || k === 'rx' || k === 'rz') turn(o, k, v); else o[k] = v;
+  });
+  sync();
+  if(bad.length) say('не посчитались формулы: ' + bad.join(', '), 'err');
+  return !bad.length;
+}
+const attr = v => esc(v).replace(/"/g, '&quot;');
+function renderParams(){
+  const L = $('params-list'), {vals, errors} = paramValues(params);
+  $('params-empty').hidden = params.length > 0;
+  L.innerHTML = params.map((p, i) => `
+    <div class="prm${errors[p.name] ? ' bad' : ''}" data-i="${i}">
+      <input class="pn" value="${attr(p.name)}" spellcheck="false">
+      <input class="pe" value="${attr(p.expr)}" inputmode="decimal" spellcheck="false">
+      <span class="pv">${errors[p.name] ? '?' : +vals[p.name].toFixed(3)}</span>
+      <span class="pu">${usersOf(objects, p.name).length || ''}</span>
+      <button class="sm pd" title="удалить">×</button>
+    </div>`).join('');
+  L.querySelectorAll('.prm').forEach(row => {
+    const i = +row.dataset.i, p = params[i];
+    row.querySelector('.pn').onchange = e => renameParam(p, e.target.value.trim());
+    row.querySelector('.pe').onchange = e => {
+      const expr = e.target.value.trim();
+      const next = params.map(x => x === p ? {...x, expr} : x);
+      if(paramValues(next).errors[p.name]) return say(`${p.name} = ${expr} — не считается`, 'err'), renderParams();
+      push(); params = next; reapply() && say(`${p.name} = ${+paramValues(params).vals[p.name].toFixed(3)}`, 'ok');
+    };
+    row.querySelector('.pd').onclick = () => {
+      const users = usersOf(objects, p.name);
+      if(users.length && !confirm(`«${p.name}» используют: ${users.map(o => o.name).join(', ')}.\nФормулы превратятся в числа. Удалить?`)) return;
+      push();
+      users.forEach(o => Object.keys(o.f).forEach(k => { if(idents(o.f[k]).includes(p.name)) setFormula(o, k); }));
+      params = params.filter(x => x !== p); sync(); say('параметр удалён: ' + p.name);
+    };
+    row.querySelectorAll('input').forEach(el => el.onkeydown = e => { if(e.key === 'Enter') el.blur(); e.stopPropagation(); });
+  });
+}
+function nameProblem(name, self){
+  if(!NAME_RE.test(name)) return 'имя — латиница, цифры и _, не с цифры';
+  if(RESERVED.has(name) || JS_RESERVED.has(name)) return `«${name}» занято полем фигуры или функцией`;
+  if(params.some(x => x !== self && x.name === name)) return `«${name}» уже есть`;
+  return '';
+}
+function renameParam(p, name){
+  if(name === p.name) return;
+  const err = nameProblem(name, p);
+  if(err){ say(err, 'err'); return renderParams(); }
+  const re = new RegExp(`\\b${p.name}\\b`, 'g');
+  push();
+  params = params.map(x => x === p ? {...x, name} : {...x, expr: x.expr.replace(re, name)});
+  objects.forEach(o => { for(const k in o.f || {}) o.f[k] = o.f[k].replace(re, name); });
+  sync(); say(`переименован: ${p.name} → ${name}`);
+}
+$('param-add').onclick = () => {
+  const name = $('param-name').value.trim(), expr = $('param-expr').value.trim() || '0';
+  const err = nameProblem(name);
+  if(err) return say(err, 'err');
+  if(paramValues([...params, {name, expr}]).errors[name]) return say(`${name} = ${expr} — не считается`, 'err');
+  push(); params = [...params, {name, expr}]; sync();
+  $('param-name').value = $('param-expr').value = ''; $('param-name').focus();
+  say(`параметр ${name} добавлен — пиши его в поля размеров: ${name}*2`, 'ok');
+};
+['param-name', 'param-expr'].forEach(id => $(id).onkeydown = e => {
+  if(e.key === 'Enter') $('param-add').click(); e.stopPropagation(); });
 
 // выравнивание: угол к ближайшим 90°, деталь обратно на стол
 document.querySelectorAll('[data-align]').forEach(b => b.onclick = () => {
@@ -774,9 +1007,103 @@ view.addEventListener('pointerup', e => {
   if(moved || e.button !== 0) return;
   pointerNdc(e); ray.setFromCamera(ndc, cam);
   if(measuring){ measureClick(); return; }
+  if(cutting){ cutClick(); return; }
   const hit = ray.intersectObjects(raw.children.filter(m => m.visible))[0];
   select(hit ? hit.object.userData.id : null);
 });
+
+// ---------- вырез по клику ----------
+// Вырез в боковой грани руками — это поворот на 90°, знание, что у повёрнутого тела
+// высота считается от центра, и арифметика координат. Здесь всё это делает клик:
+// нормаль грани выбирает поворот, отверстие начинается на 0.5 мм снаружи и уходит внутрь.
+let cutting = false;
+function cutOff(){ cutting = false; cutGhost.visible = false; $('cut').classList.remove('on'); $('cut-opts').hidden = true; $('stage').classList.remove('cutting'); }
+$('cut').onclick = () => {
+  if(cutting) return cutOff(), say('вырез выключен');
+  if(measuring) measureOff();
+  cutting = true; $('cut').classList.add('on'); $('cut-opts').hidden = false; $('stage').classList.add('cutting');
+  say('кликни по грани детали — вырез встанет поперёк неё');
+};
+// крепёж: винт — номинальный диаметр с посадкой «свободная» (зазор даёт калибровка принтера);
+// гайка — шестигранник по размеру под ключ ISO 4032 с запасом 0.3 и глубиной высота+0.4
+const SCREWS = {'M2.5': 2.5, M3: 3, M4: 4, M5: 5};
+const NUTS = {nutM3: {flats: 5.5, h: 2.4}, nutM4: {flats: 7, h: 3.2}, nutM5: {flats: 8, h: 4.7}};
+$('cut-close').onclick = () => { cutOff(); say('вырез выключен'); };
+$('cut-shape').onchange = () => {
+  const v = $('cut-shape').value, std = v in SCREWS || v in NUTS;
+  $('cut-h-row').style.display = v === 'round' || std ? 'none' : '';
+  $('cut-w-row').style.display = std ? 'none' : '';
+  if(v in NUTS) $('cut-d').value = +(NUTS[v].h + .4 + .5).toFixed(1);   // +0.5 — часть, что торчит наружу
+};
+$('cut-shape').onchange();
+['cut-w', 'cut-h', 'cut-d'].forEach(id => $(id).onkeydown = e => e.stopPropagation());
+// Привязка: у центральной линии грани (±2 мм) вырез встаёт ровно по центру — руками
+// попасть в центр стенки кликом нельзя; иначе, при включённой сетке, шаг 0.5 мм.
+const CUT_SNAP = 2;
+function cutPlan(){
+  const targets = raw.children.filter(m => m.visible && !objects.find(o => o.id === m.userData.id)?.hole);
+  if(resultMesh) targets.push(resultMesh);
+  const hit = ray.intersectObjects(targets)[0];
+  if(!hit?.face) return {err: 'мимо детали — кликни по её грани'};
+  const num = id => evalExpr($(id).value, paramValues(params).vals);
+  const shape = $('cut-shape').value, nut = NUTS[shape];
+  const W = shape in SCREWS ? SCREWS[shape] : nut ? +((nut.flats + .3) * 2/Math.sqrt(3)).toFixed(2) : num('cut-w');
+  const H = shape === 'round' || shape in SCREWS || nut ? W : num('cut-h'), D = num('cut-d');
+  if(![W, H, D].every(v => Number.isFinite(v) && v > 0)) return {err: 'размеры выреза — положительные числа'};
+  const n = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
+  const ax = Math.abs(n.x), ay = Math.abs(n.y), az = Math.abs(n.z);
+  const axis = ay >= ax && ay >= az ? 'y' : ax >= az ? 'x' : 'z';
+  const p = hit.point.clone(), box = new THREE.Box3().setFromObject(hit.object), mid = box.getCenter(new THREE.Vector3());
+  const centered = [];
+  for(const k of ['x', 'y', 'z'].filter(k => k !== axis)){
+    if(Math.abs(p[k] - mid[k]) < CUT_SNAP){ p[k] = mid[k]; centered.push(k); }
+    else if(snap) p[k] = Math.round(p[k] * 2) / 2;
+  }
+  // центр: от поверхности внутрь на (D/2 - 0.5), чтобы 0.5 мм торчало наружу и не осталось плёнки
+  const c = p.addScaledVector(n, -(D/2 - .5));
+  const plate = Math.round(c.x / PLATE_GAP) === 1 && plates[1].group.visible ? 1 : 0;
+  // повёрнутое тело: rz=90 кладёт высоту вдоль X (грань смотрит по X), rx=90 — вдоль плана Y;
+  // тогда размер тела w (или d) становится видимой высотой выреза
+  const rot = axis === 'y' ? {w: W, d: H} : axis === 'x' ? {w: H, d: W, rz: 90} : {w: W, d: H, rx: 90};
+  const base = {name: `вырез ${nextId}`, x: +(c.x - plate*PLATE_GAP).toFixed(2), y: +c.z.toFixed(2),
+                z: +(c.y - D/2).toFixed(2), h: D, hole: true, plate: plate || undefined, rx: 0, rz: 0, ...rot};
+  const extra = shape === 'round' ? {type: 'cyl', w: W, d: W}
+    : shape in SCREWS ? {type: 'cyl', w: W, d: W, fit: 'loose', name: `под винт ${shape}`}
+    : nut ? {type: 'poly', sides: 6, w: W, d: W, name: `гайка ${shape.slice(3)}`}
+    : shape === 'rect' ? {type: 'box'}
+    : (g => ({type: 'sketch', pts: g.pts, w: g.size, d: g.size, round: undefined}))(roundedRect(rot.w, rot.d, Math.min(rot.w, rot.d)/2));
+  const o = fill({...base, ...extra, id: -1, color: '#d0455f', vis: true});
+  const size = shape in SCREWS ? `${shape}, зазор +${gap(o)} под твой принтер` : nut ? `под ключ ${nut.flats}`
+    : shape === 'round' ? 'Ø' + W + ' мм' : W + '×' + H + ' мм';
+  const where = centered.length === 2 ? 'по центру грани' : centered.length ? 'по центру по одной оси' : '';
+  return {o, info: `${size}, глубина ${D}` + (where ? ` · ${where}` : '')};
+}
+function cutClick(){
+  const r = cutPlan();
+  if(r.err) return say(r.err, 'err');
+  push();
+  const o = {...r.o, id: nextId++};
+  objects.push(o); selId = o.id; cutGhost.visible = false; sync();
+  say(`${o.name}: ${r.info} — поправь в свойствах, если надо`, 'ok');
+}
+// призрак выреза под курсором: тот же расчёт, что и у клика, поэтому что видно — то и встанет
+const cutGhost = new THREE.Mesh(new THREE.BufferGeometry(),
+  new THREE.MeshBasicMaterial({color: 0xff5a76, transparent: true, opacity: .5, depthTest: false}));
+cutGhost.renderOrder = 998; cutGhost.visible = false; scene.add(cutGhost);
+let cutGhostSig = '';
+view.addEventListener('pointermove', e => {
+  if(!cutting || e.buttons) return;
+  pointerNdc(e); ray.setFromCamera(ndc, cam);
+  const r = cutPlan();
+  if(r.err){ cutGhost.visible = false; return; }
+  const g = geoOf(r.o), key = sig(g) + ':' + JSON.stringify(g.pts || '');
+  if(key !== cutGhostSig){ cutGhost.geometry.dispose(); cutGhost.geometry = unitGeo(g); cutGhostSig = key; }
+  const mat = cutGhost.material;
+  objToMesh(r.o, cutGhost);
+  cutGhost.material = mat; cutGhost.visible = true;
+  say(r.info);
+});
+view.addEventListener('pointerleave', () => { cutGhost.visible = false; });
 
 // ---------- измерение расстояния ----------
 // не CAD-констрейнты, просто «поставил две точки — увидел мм»: клик по телу или по столу
@@ -808,6 +1135,7 @@ function measureOff(){
   if(measureLine){ scene.remove(measureLine); measureLine.geometry.dispose(); measureLine = null; }
 }
 $('measure').onclick = () => {
+  if(cutting) cutOff();
   measuring = !measuring; $('measure').classList.toggle('on', measuring);
   if(!measuring) measureOff(); else { measurePts = []; measureDots.forEach(d => d.visible = false);
     if(measureLine){ scene.remove(measureLine); measureLine.geometry.dispose(); measureLine = null; } }
@@ -912,7 +1240,7 @@ addEventListener('keydown', e => {
   if(meta && e.key.toLowerCase() === 'z'){ e.preventDefault(); (e.shiftKey ? $('redo') : $('undo')).click(); return; }
   if(meta && e.key.toLowerCase() === 'd'){ e.preventDefault(); $('dup').click(); return; }
   if(e.key === 'Delete' || e.key === 'Backspace'){ e.preventDefault(); $('del').click(); return; }
-  if(e.key === 'Escape'){ if(measuring) measureOff(); else if(sketching) $('sketch').click(); else select(null); return; }
+  if(e.key === 'Escape'){ if(cutting) cutOff(); else if(measuring) measureOff(); else if(sketching) $('sketch').click(); else select(null); return; }
   const k = e.key.toLowerCase();
   if(k === 'g') setMode('translate'); if(k === 'r') setMode('rotate'); if(k === 's') setMode('scale');
   if(k === 'f'){ e.preventDefault(); focusSelection(); return; }
@@ -925,7 +1253,7 @@ function stlBytes(){
   let m;
   const on = objects.filter(o => (o.plate || 0) === printPlate());
   if(!on.length) say(printPlate() ? 'стол агента пуст' : 'твой стол пуст', 'err');
-  try{ m = buildResult(on, (o, b) => objToMesh({...o, plate:0}, b), MAT.result); }
+  try{ m = buildResult(on.map(geoOf), (o, b) => objToMesh({...o, plate:0}, b), MAT.result); }
   catch(e){ say('не удалось собрать: ' + e.message, 'err'); return null; }
   if(!m){ say('нет ни одного тела', 'err'); return null; }
   // меш собран только ради экспорта и в сцену не попадает — освобождаем сразу,
@@ -941,7 +1269,8 @@ $('estimate').onclick = async e => {
   try{
     const r = await fetch('/estimate', {method:'POST', body: out, headers:{
       'x-support': $('sup').checked ? '1' : '0', 'x-infill': $('infill').value,
-      'x-pattern': $('pattern').value, 'x-walls': $('walls').value, 'x-bed': $('bed').value}});
+      'x-pattern': $('pattern').value, 'x-walls': $('walls').value, 'x-bed': $('bed').value,
+      'x-material': neededMaterial()}});
     const j = await r.json();
     if(j.error) throw new Error(j.error);
     const h = Math.floor(j.seconds/3600), m = Math.round(j.seconds%3600/60);
@@ -964,15 +1293,70 @@ $('stl').onclick = async e => {
   await saveStl(out, 'usta.stl');
   say('STL сохранён', 'ok');
 };
+// ---------- проверка перед печатью ----------
+// габариты — по мешам сцены (с поворотом и зазором посадки), нависания — по собранной детали
+const overhangMat = new THREE.MeshBasicMaterial({color: 0xff8a3d, transparent: true, opacity: .75,
+  side: THREE.DoubleSide, depthTest: true, polygonOffset: true, polygonOffsetFactor: -2});
+function clearOverhang(){ if(overhangMesh){ kill(overhangMesh); overhangMesh = null; } }
+// материал, которого требуют тела на печатаемом столе (шаблон чехла ставит TPU)
+function neededMaterial(){
+  const m = [...new Set(objects.filter(o => (o.plate || 0) === printPlate() && o.vis && !o.hole && o.material)
+                               .map(o => o.material))];
+  return m.join('+');
+}
+function runPreflight(){
+  clearOverhang();
+  const on = objects.filter(o => (o.plate || 0) === printPlate() && o.vis);
+  const bodies = on.map(o => {
+    const m = meshOf(o.id); if(!m) return null;
+    m.updateMatrixWorld();
+    const b = new THREE.Box3().setFromObject(m);
+    return {name: o.name, hole: o.hole, keep: o.mode === 'keep', min: b.min, max: b.max};
+  }).filter(Boolean);
+  let res;
+  try{
+    const m = buildResult(on.map(geoOf), (o, b) => objToMesh(o, b), MAT.result);
+    const g = m?.geometry;
+    res = preflight({bodies, pos: g?.attributes.position.array, index: g?.index?.array, supports: $('sup').checked});
+    if(g && res.overhangTris.length){
+      const src = g.attributes.position.array, idx = g.index?.array, out = new Float32Array(res.overhangTris.length*9);
+      res.overhangTris.forEach((t, k) => { for(let c = 0; c < 3; c++){ const v = (idx ? idx[t*3 + c] : t*3 + c)*3;
+        out.set([src[v], src[v+1], src[v+2]], k*9 + c*3); } });
+      const og = new THREE.BufferGeometry(); og.setAttribute('position', new THREE.BufferAttribute(out, 3));
+      overhangMesh = new THREE.Mesh(og, overhangMat); overhangMesh.renderOrder = 997; scene.add(overhangMesh);
+    }
+    g?.dispose();
+  }catch(e){ res = preflight({bodies}); res.items.unshift({level: 'warn', text: 'нависания не посчитались: ' + e.message}); }
+  const need = neededMaterial();
+  if(need) res.items.unshift({level: 'warn', text: `деталь рассчитана на ${need}`,
+    fix: need === 'TPU' ? 'TPU подаётся с внешней катушки мимо AMS lite; на экране A1 укажи её тип — TPU, иначе печать не начнётся'
+                        : `заряди ${need} и укажи его тип на экране A1`});
+  const box = $('pre');
+  box.hidden = false;
+  box.innerHTML = res.items.map(i => `<div class="pi ${i.level}"><i></i><span>${esc(i.text)}` +
+    (i.fix ? `<small>${esc(i.fix)}</small>` : '') + '</span></div>').join('');
+  return res;
+}
+$('preflight').onclick = () => {
+  const r = runPreflight(), errs = r.items.filter(i => i.level === 'err').length, warns = r.items.filter(i => i.level === 'warn').length;
+  say(errs ? `проверка: ошибок ${errs}, предупреждений ${warns}` : warns ? `проверка: предупреждений ${warns}` : 'проверка: всё в порядке',
+      errs ? 'err' : warns ? '' : 'ok');
+};
+
 async function toPrinter(path, btn, label){
+  const pre = runPreflight(), errs = pre.items.filter(i => i.level === 'err');
+  if(errs.length && !confirm('Перед печатью нашлись ошибки:\n\n' + errs.map(i => '• ' + i.text).join('\n') +
+                             '\n\nВсё равно отправить на принтер?')) return;
   if(path === '/print' && !confirm('Запустить печать на A1 прямо сейчас?')) return;
   const done = busy(btn, t('слайсим…')); say('слайсим в Bambu Studio, ~20 сек');
   const out = await stlBytes(); if(!out) return done();
   try{
     const r = await fetch(path, {method:'POST', body: out, headers:{
       'x-support': $('sup').checked ? '1' : '0',
-      'x-infill': $('infill').value, 'x-pattern': $('pattern').value, 'x-walls': $('walls').value, 'x-bed': $('bed').value}});
+      'x-infill': $('infill').value, 'x-pattern': $('pattern').value, 'x-walls': $('walls').value, 'x-bed': $('bed').value,
+      'x-material': neededMaterial()}});
     const j = await r.json();
+    if(r.status === 409){ say(j.error, 'err'); return done(); }   // не тот пластик — совет уже в тексте
     if(j.error) throw new Error(j.error);
     say((j.printing ? 'печать запущена: ' : 'залито на принтер: ') + j.file
         + (j.support ? ' · с поддержками' : '') + ` · заполнение ${j.infill}%`, 'ok');
@@ -1498,6 +1882,17 @@ function spread(){
   }
 }
 const placed = [];
+// размер фигуры на экране в пикселях — по диагонали проекции её габарита
+function screenSize(m){
+  const b = new THREE.Box3().setFromObject(m), W = labels.clientWidth, H = labels.clientHeight;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for(const x of [b.min.x, b.max.x]) for(const y of [b.min.y, b.max.y]) for(const z of [b.min.z, b.max.z]){
+    const p = V(x, y, z).project(cam);
+    const sx = (p.x*.5 + .5) * W, sy = (-p.y*.5 + .5) * H;
+    x0 = Math.min(x0, sx); x1 = Math.max(x1, sx); y0 = Math.min(y0, sy); y1 = Math.max(y1, sy);
+  }
+  return Math.hypot(x1 - x0, y1 - y0);
+}
 const V = (x,y,z) => new THREE.Vector3(x,y,z);
 function drawLabels(){
   let i = 0;
@@ -1513,8 +1908,9 @@ function drawLabels(){
   const plate = $('bed').selectedOptions[0]?.textContent || '';
   label(i++, act === 0 ? `МОЙ СТОЛ · ${plate} · в печать` : 'мой стол',
         V(0, 0, -BED/2 - 14), act === 0 ? '' : 'bed');
-  label(i++, act === 1 ? 'СТОЛ АГЕНТА · в печать' : 'стол агента',
-        V(PLATE_GAP, 0, -BED/2 - 14), act === 1 ? '' : 'bed');
+  if(plates[1].group.visible)
+    label(i++, act === 1 ? 'СТОЛ АГЕНТА · в печать' : 'стол агента',
+          V(PLATE_GAP, 0, -BED/2 - 14), act === 1 ? '' : 'bed');
 
   // мини-панель висит над выбранной фигурой, чтобы не бегать в угол сцены
   const hud = $('hud'), selHud = sel(), mHud = selHud && meshOf(selHud.id);
@@ -1542,14 +1938,22 @@ function drawLabels(){
     } else hud.hidden = true;
   } else hud.hidden = true;
 
+  // Мелкая на экране фигура: пять подписей вокруг неё ложатся друг на друга и на гизмо,
+  // поэтому размеры сводим в одну строку под фигурой, глубину отверстия — в одну над ней
+  const selObj = sel(), selMesh = selObj && meshOf(selObj.id);
+  const compact = !!selMesh && screenSize(selMesh) < 110;
+
   // глубина захода отверстия
-  const selObj = sel();
   if(ghostDepth && selObj && selObj.hole){
     const c = ghostDepth.center, s2 = ghostDepth.size;
-    label(i++, `в детали ${s2.y.toFixed(1)} мм`, V(c.x, ghostDepth.top + 4, c.z));
     const out = selObj.h - s2.y;
-    if(out > 0.2) label(i++, `снаружи ${out.toFixed(1)} мм`,
-                        V(c.x, selObj.z + selObj.h + 3, c.z), 'bed');
+    if(compact) label(i++, `в детали ${s2.y.toFixed(1)}` + (out > 0.2 ? ` · снаружи ${out.toFixed(1)}` : '') + ' мм',
+                      V(c.x, selObj.z + selObj.h + 3, c.z));
+    else {
+      label(i++, `в детали ${s2.y.toFixed(1)} мм`, V(c.x, ghostDepth.top + 4, c.z));
+      if(out > 0.2) label(i++, `снаружи ${out.toFixed(1)} мм`,
+                          V(c.x, selObj.z + selObj.h + 3, c.z), 'bed');
+    }
   } else if(selObj && selObj.hole && selObj.vis && !showResult){
     const m = meshOf(selObj.id);
     if(m) label(i++, 'не задевает деталь', V(m.position.x, m.position.y + selObj.h/2 + 4, m.position.z));
@@ -1560,10 +1964,14 @@ function drawLabels(){
   if(m && m.visible){
     const b = new THREE.Box3().setFromObject(m), c = new THREE.Vector3(), sz = new THREE.Vector3();
     b.getCenter(c); b.getSize(sz);
+    if(compact){
+      label(i++, `${+sz.x.toFixed(1)} × ${+sz.z.toFixed(1)} × ${+sz.y.toFixed(1)} мм`, V(c.x, b.min.y, b.max.z + 3));
+    } else {
     label(i++, `${sz.x.toFixed(1)} мм`, V(c.x, b.min.y, b.max.z + 3));
     label(i++, `${sz.z.toFixed(1)} мм`, V(b.max.x + 3, b.min.y, c.z));
     label(i++, `${sz.y.toFixed(1)} мм`, V(b.max.x + 3, c.y, b.max.z + 3));
     if(o.z > 0.05) label(i++, `↑ ${o.z} мм`, V(b.min.x - 3, o.z/2, b.max.z));
+    }
   }
 
   if(measurePts.length === 2){
@@ -1591,8 +1999,9 @@ function updateGridLOD(){
 // любая линейка в перспективе без единого масштаба на весь экран.
 const rulerX = $('ruler-x'), rulerY = $('ruler-y');
 const rxCtx = rulerX.getContext('2d'), ryCtx = rulerY.getContext('2d');
-const RULER_BG = getComputedStyle(document.documentElement).getPropertyValue('--panel').trim() || '#16181d';
-const RULER_DIM = getComputedStyle(document.documentElement).getPropertyValue('--dim').trim() || '#8a909b';
+const cssVar = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+let RULER_BG = cssVar('--panel'), RULER_DIM = cssVar('--dim');
+darkMq.addEventListener('change', () => { RULER_BG = cssVar('--panel'); RULER_DIM = cssVar('--dim'); });
 const NICE_STEPS = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000];
 const niceStep = (pxPerUnit, targetPx) => NICE_STEPS.find(s => s * pxPerUnit >= targetPx) || 1000;
 const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -1621,6 +2030,10 @@ function drawRulers(){
   // опорная точка — центр экрана на плоскости стола; относительно нее меряем
   // локальный масштаб (мм/пиксель), а сами деления кладём на круглые мировые X/Z
   const center = toGround(0, 0);
+  const dir = new THREE.Vector3(); cam.getWorldDirection(dir);
+  const axisAligned = Math.abs(dir.y) > .97 || Math.abs(dir.x) > .97 || Math.abs(dir.z) > .97;
+  // пустая полоса выглядит как сломанная линейка — без делений прячем её совсем
+  $('stage').classList.toggle('rulers', !!center && axisAligned);
   if(!center) return;   // смотрим мимо стола (в небо) — мерить нечему
   const dx = toGround(20 / W, 0), dy = toGround(0, 20 / H);
   const pxPerMmX = dx ? 20 / Math.max(1e-6, Math.abs(dx.x - center.x)) : 0;
@@ -1630,8 +2043,6 @@ function drawRulers(){
   // это не нарисовать честно. Смотрим напрямую, куда направлена камера: если это не
   // почти строго сверху и не почти строго вдоль X/Z (виды Сверху/Спереди/Сбоку,
   // не важно как их достигли — кнопкой или довернули орбитой) — деления не рисуем
-  const dir = new THREE.Vector3(); cam.getWorldDirection(dir);
-  const axisAligned = Math.abs(dir.y) > .97 || Math.abs(dir.x) > .97 || Math.abs(dir.z) > .97;
   const tooTiltedX = !axisAligned, tooTiltedY = !axisAligned;
 
   if(pxPerMmX > .3 && !tooTiltedX){
@@ -1701,12 +2112,20 @@ async function migrateLocal(st){
 
 async function boot(){
   try{
-    let st = await (await fetch('/api/state')).json();
+    const r = await fetch('/api/state');
+    // страница открыта не через сервер usta (просто файлом или чужим сервером) — вместо JSON
+    // приходит HTML-ошибка, и «Unexpected token <» человеку ничего не говорит
+    if(!r.ok || !(r.headers.get('content-type') || '').includes('json')) throw new Error('offline');
+    let st = await r.json();
     st = await migrateLocal(st);
     if(st.scene) restore(st.scene);
     lib = st.sketches || [];
     Object.assign(tok, st.tokens || {});
-  }catch(e){ say('база недоступна, работаем без сохранения: ' + e.message, 'err'); }
+  }catch(e){
+    say(e.message === 'offline'
+      ? 'сервер usta не запущен — правки не сохранятся. Запусти make run и открой 127.0.0.1:8765'
+      : 'база не ответила, правки не сохранятся: ' + e.message, 'err');
+  }
   renderLib(); showTokens(); sync();
 }
 restoreCam(); boot(); markPlates(); loop();

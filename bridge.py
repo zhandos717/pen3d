@@ -502,6 +502,30 @@ def loaded_material():
     return None
 
 
+# Деталь может требовать материал (чехол — TPU). Резать её под то, что «наверное» заряжено,
+# нельзя: не сообщивший тип принтер даёт None, и слайс уходит с профилем PLA — не те
+# температура и подача, TPU забивает сопло. Лучше отказать и сказать, что сделать.
+def material_problem(need, loaded):
+    if not need:
+        return None
+    need = need.upper()
+    if not loaded:
+        return (f'деталь рассчитана на {need}, а принтер не сообщил, какой пластик заряжен — '
+                f'на экране A1 укажи тип внешней катушки: {need}')
+    if need not in loaded.upper():
+        return f'деталь рассчитана на {need}, а в принтере {loaded} — заряди {need} или убери требование в шаблоне'
+    return None
+
+
+def selfcheck_material():
+    assert material_problem(None, None) is None, 'без требования — не мешаем'
+    assert material_problem('TPU', 'TPU') is None
+    assert material_problem('tpu', 'TPU 95A') is None
+    assert 'не сообщил' in material_problem('TPU', None)
+    assert 'в принтере PLA' in material_problem('TPU', 'PLA')
+    print('материал: ок')
+
+
 BED_TYPES = {'Cool Plate': 'cool_plate', 'Textured PEI Plate': 'textured_plate',
              'Bambu Cool Plate': 'cool_plate', 'Engineering Plate': 'eng_plate',
              'High Temp Plate': 'hot_plate'}
@@ -977,17 +1001,21 @@ class H(BaseHTTPRequestHandler):
         stl = body
         support = self.headers.get('x-support') == '1'
         bed = self.headers.get('x-bed') or 'Textured PEI Plate'
+        need = self.headers.get('x-material') or None
         if self.path.rstrip('/').endswith('/estimate'):
             try:
                 return self._send(200, self.do_estimate(
                     stl, support, self.headers.get('x-infill'),
-                    self.headers.get('x-pattern'), self.headers.get('x-walls'), bed))
+                    self.headers.get('x-pattern'), self.headers.get('x-walls'), bed, need))
             except Exception as e:
                 return self._send(500, {'error': f'{type(e).__name__}: {e}'})
         infill = self.headers.get('x-infill')
         pattern = self.headers.get('x-pattern')
         walls = self.headers.get('x-walls')
         do_print = self.path.rstrip('/').endswith('/print')
+        problem = material_problem(need, loaded_material())
+        if problem:
+            return self._send(409, {'error': problem})
         try:
             c = cfg()
             mf, _td = sliced(stl, support, infill, pattern, walls, None, bed)
@@ -1028,11 +1056,12 @@ class H(BaseHTTPRequestHandler):
     def do_ai_log(self):
         self._send(200, {'rows': db.log_rows()})
 
-    def do_estimate(self, stl, support, infill, pattern, walls, bed='Textured PEI Plate'):
+    def do_estimate(self, stl, support, infill, pattern, walls, bed='Textured PEI Plate', need=None):
         """Bambu CLI оставляет вес и плотность нулевыми, поэтому берём длину прутка
         из gcode и считаем массу сами — из профиля филамента."""
         import zipfile
-        mf, td = sliced(stl, support, infill, pattern, walls, None, bed)
+        # оценка — под материал детали, даже если в принтере пока другой: вес и время TPU другие
+        mf, td = sliced(stl, support, infill, pattern, walls, need, bed)
         z = zipfile.ZipFile(mf)
         g = z.read('Metadata/plate_1.gcode').decode('utf-8', 'replace')
         info = z.read('Metadata/slice_info.config').decode('utf-8', 'replace')
@@ -1183,8 +1212,10 @@ def selfcheck():
 
 
 if __name__ == '__main__':
+    if '--check-material' in sys.argv:
+        selfcheck_material(); sys.exit()
     if '--selfcheck' in sys.argv:
-        selfcheck_templates(); selfcheck(); sys.exit()
+        selfcheck_material(); selfcheck_templates(); selfcheck(); sys.exit()
     if not os.path.exists(CFG):
         print(f'! Нет {CFG} — рисовать и качать STL можно, печать и AI не будут работать.\n'
               '  Создай: {"ip":"192.168.1.50","code":"12345678","serial":"01P00A...","deepseek_key":"sk-..."}\n'
