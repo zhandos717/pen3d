@@ -236,6 +236,14 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
   #pre .pi i { width:8px; height:8px; border-radius:50%; margin-top:5px; background:var(--accent); }
   #pre .pi.warn i { background:#e0a73f; } #pre .pi.err i { background:var(--danger); }
   #pre .pi small { display:block; color:var(--dim); font-size:11px; }
+  .spool { display:grid; grid-template-columns:auto 1fr auto; gap:6px; align-items:center; font-size:12px; margin-top:4px; }
+  .spool .bar { height:5px; border-radius:3px; background:var(--line); overflow:hidden; }
+  .spool .bar i { display:block; height:100%; background:var(--accent); }
+  .spool.low .bar i { background:var(--danger); }
+  .spool button { padding:0 6px; font-size:11px; }
+  #journal { display:flex; flex-direction:column; gap:3px; margin-top:8px; max-height:180px; overflow-y:auto; }
+  #journal .jr { display:grid; grid-template-columns:14px 1fr auto; gap:6px; font-size:11.5px; color:var(--dim); }
+  #journal .jr b { color:var(--ink); font-weight:500; }
   input.fx { font-family: ui-monospace, monospace; color:var(--fx); }
 </style>
 
@@ -311,6 +319,15 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
         <img id="cam" alt="камера принтера">
         <div class="hint" id="cam-hint">поток идёт с принтера напрямую, ~1 кадр в 2 секунды</div>
       </div>
+    </div>
+
+    <div class="grp">
+      <h2>Катушки и журнал</h2>
+      <div id="spools"></div>
+      <button class="sm" id="spool-add" style="width:100%;margin-top:6px">Новая катушка</button>
+      <div id="journal"></div>
+      <div class="hint">Пластик списывается после успешной печати по расчёту слайсера. Перед печатью
+        предупредим, если на катушке не хватит.</div>
     </div>
 
     <div class="grp">

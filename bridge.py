@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Мост браузер -> Bambu Lab A1 в LAN Mode: STL -> слайс -> FTPS -> MQTT print."""
-import ftplib, itertools, json, math, os, re, socket, ssl, struct, subprocess, sys, tempfile, time, uuid
+import ftplib, itertools, json, math, os, re, socket, ssl, struct, subprocess, sys, tempfile, time, urllib.parse, uuid
 
 import db
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -408,6 +408,38 @@ DENSITY = {'PLA': 1.24, 'PETG': 1.27, 'ABS': 1.04, 'ASA': 1.07, 'TPU': 1.21,
            'PC': 1.20, 'PA': 1.15, 'PVA': 1.23, 'HIPS': 1.04}
 
 
+def slice_facts(mf):
+    """Bambu CLI оставляет вес и плотность нулевыми, поэтому берём длину прутка
+    из gcode и считаем массу сами — из профиля филамента."""
+    import zipfile
+    z = zipfile.ZipFile(mf)
+    g = z.read('Metadata/plate_1.gcode').decode('utf-8', 'replace')
+    info = z.read('Metadata/slice_info.config').decode('utf-8', 'replace')
+
+    def num(pat, text, default=0.0):
+        m = re.search(pat, text, re.I | re.M)
+        return float(m.group(1)) if m else default
+
+    length = num(r'total filament length \[mm\]\s*[:=]\s*([\d.]+)', g)
+    seconds = num(r'key="prediction" value="(\d+)"', info)
+    layers = num(r'total layer number:\s*(\d+)', g)
+    f = filament_facts()
+    volume_mm3 = length * math.pi * (f['diameter'] / 2) ** 2
+    grams = volume_mm3 / 1000 * f['density']
+    return {'grams': round(grams, 1), 'length_m': round(length / 1000, 2),
+            'volume_cm3': round(volume_mm3 / 1000, 1), 'seconds': int(seconds), 'layers': int(layers),
+            'cost': round(grams / 1000 * f['cost_per_kg'], 2) if f['cost_per_kg'] else None,
+            **f}                       # длина, диаметр, плотность и материал — чтобы цифру можно было проверить
+
+
+def spool_problem(material, grams, left):
+    """Катушка кончится посреди печати — деталь испорчена, время потеряно. Запас 5%:
+    слайсер не считает продувку и первую линию."""
+    if left is None or not grams or left >= grams * 1.05:
+        return None
+    return f'на катушке {material} осталось ~{left:.0f} г, а детали нужно {grams:.0f} г'
+
+
 def filament_facts():
     """Плотность и диаметр берём из профиля филамента, а не из константы:
     PLA и ABS различаются на 20%, а на 2.85-мм прутке площадь сечения втрое больше."""
@@ -515,6 +547,13 @@ def material_problem(need, loaded):
     if need not in loaded.upper():
         return f'деталь рассчитана на {need}, а в принтере {loaded} — заряди {need} или убери требование в шаблоне'
     return None
+
+
+def selfcheck_spool():
+    assert spool_problem('PLA', 50, None) is None, 'катушка не заведена — не мешаем'
+    assert spool_problem('PLA', 50, 100) is None
+    assert 'осталось ~50 г' in spool_problem('PLA', 50, 50), 'впритык без запаса — предупредить'
+    print('катушка: ок')
 
 
 def selfcheck_material():
@@ -699,8 +738,14 @@ def printer_watch():
                 **{k: d[k] for k in ('command', 'result', 'reason', 'errno', 'sequence_id',
                                      'param', 'url', 'msg', 'print_error', 'fail_reason') if k in d}}])[-12:]
         if d:
+            was = PRINTER['state'].get('gcode_state')
             PRINTER['state'].update(d)
             PRINTER['ts'] = time.time()
+            now_state = PRINTER['state'].get('gcode_state')
+            # итог печати — переход из «идёт» в FINISH/FAILED; повторные отчёты с тем же
+            # состоянием приходят каждые пару секунд и журнал трогать не должны
+            if was in ('RUNNING', 'PAUSE', 'PREPARE') and now_state in ('FINISH', 'FAILED'):
+                db.print_finish(now_state == 'FINISH')
 
     def on_disconnect(cl, ud, *a):
         PRINTER['error'] = 'связь с принтером потеряна, переподключаюсь'
@@ -921,6 +966,8 @@ class H(BaseHTTPRequestHandler):
             return self.do_camera()
         if p == '/api/history':
             return self._send(200, {'rows': db.snapshots()})
+        if p == '/api/prints':
+            return self._send(200, {'prints': db.prints(), 'spools': db.spools()})
         if p == '/api/state':
             return self._send(200, {'scene': db.scene_get(), 'sketches': db.sketches(),
                                     'tokens': db.counter_get()})
@@ -958,6 +1005,13 @@ class H(BaseHTTPRequestHandler):
                     return self._send(200, {'ok': True, 'scene': sc})
                 db.snapshot_add(json.loads(body) if body else db.scene_get(), 'вручную')
                 return self._send(200, {'ok': True})
+            if p == '/api/spools':
+                d = json.loads(body)
+                if not str(d.get('material') or '').strip():
+                    return self._send(400, {'error': 'нужен тип пластика'})
+                net, left = float(d.get('net_g') or 1000), float(d.get('left_g', d.get('net_g') or 1000))
+                db.spool_set(d['material'].strip(), net, max(0.0, min(left, net)))
+                return self._send(200, {'spools': db.spools()})
             if p == '/api/sketches':
                 return self._send(200, {'id': db.sketch_add(json.loads(body))})
             if p.startswith('/api/sketches/'):
@@ -1019,11 +1073,18 @@ class H(BaseHTTPRequestHandler):
         try:
             c = cfg()
             mf, _td = sliced(stl, support, infill, pattern, walls, None, bed)
+            facts = slice_facts(mf)
+            material = (loaded_material() or need or facts.get('material') or '').upper() or None
+            low = spool_problem(material, facts['grams'], db.spool_left(material))
+            if low and self.headers.get('x-force') != '1':
+                return self._send(409, {'error': low, 'code': 'low_spool'})
             if True:
                 name = f'usta-{uuid.uuid4().hex[:6]}.gcode.3mf'
                 upload(mf, name, c['ip'], c['code'])
                 if do_print:
                     start_print(name, c['ip'], c['code'], c['serial'], file_md5(mf))
+                    title = urllib.parse.unquote(self.headers.get('x-name') or '') or None
+                    db.print_add(title, name, material, facts['grams'], facts['seconds'])
             self._send(200, {'ok': True, 'file': name, 'printing': do_print,
                              'support': support, 'infill': infill,
                              'material': loaded_material()})
@@ -1057,30 +1118,9 @@ class H(BaseHTTPRequestHandler):
         self._send(200, {'rows': db.log_rows()})
 
     def do_estimate(self, stl, support, infill, pattern, walls, bed='Textured PEI Plate', need=None):
-        """Bambu CLI оставляет вес и плотность нулевыми, поэтому берём длину прутка
-        из gcode и считаем массу сами — из профиля филамента."""
-        import zipfile
         # оценка — под материал детали, даже если в принтере пока другой: вес и время TPU другие
         mf, td = sliced(stl, support, infill, pattern, walls, need, bed)
-        z = zipfile.ZipFile(mf)
-        g = z.read('Metadata/plate_1.gcode').decode('utf-8', 'replace')
-        info = z.read('Metadata/slice_info.config').decode('utf-8', 'replace')
-
-        def num(pat, text, default=0.0):
-            m = re.search(pat, text, re.I | re.M)
-            return float(m.group(1)) if m else default
-
-        length = num(r'total filament length \[mm\]\s*[:=]\s*([\d.]+)', g)
-        seconds = num(r'key="prediction" value="(\d+)"', info)
-        layers = num(r'total layer number:\s*(\d+)', g)
-        f = filament_facts()
-        volume_mm3 = length * math.pi * (f['diameter'] / 2) ** 2
-        grams = volume_mm3 / 1000 * f['density']
-        return {'grams': round(grams, 1), 'length_m': round(length / 1000, 2),
-                'volume_cm3': round(volume_mm3 / 1000, 1), 'seconds': int(seconds),
-                'layers': int(layers), 'support': support, 'infill': infill,
-                'cost': round(grams / 1000 * f['cost_per_kg'], 2) if f['cost_per_kg'] else None,
-                **f}                       # длина, диаметр, плотность и материал — чтобы цифру можно было проверить
+        return {**slice_facts(mf), 'support': support, 'infill': infill}
 
     def do_agent_stream(self, req_body):
         """Шаги агента уходят в браузер по мере работы — видно, что он делает."""
@@ -1213,7 +1253,7 @@ def selfcheck():
 
 if __name__ == '__main__':
     if '--check-material' in sys.argv:
-        selfcheck_material(); sys.exit()
+        selfcheck_material(); selfcheck_spool(); sys.exit()
     if '--selfcheck' in sys.argv:
         selfcheck_material(); selfcheck_templates(); selfcheck(); sys.exit()
     if not os.path.exists(CFG):

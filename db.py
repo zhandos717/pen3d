@@ -47,6 +47,23 @@ CREATE TABLE IF NOT EXISTS snapshots(
   bodies  INTEGER NOT NULL,              -- тел в снимке, чтобы список читался без разбора JSON
   note    TEXT);                         -- 'авто' или причина ручного снимка
 
+CREATE TABLE IF NOT EXISTS prints(
+  id          INTEGER PRIMARY KEY,
+  ts          TEXT NOT NULL,                -- когда отправлено на принтер, локальное время
+  name        TEXT,                         -- что печаталось: имя детали из редактора
+  file        TEXT,                         -- имя .3mf на принтере
+  material    TEXT,                         -- тип пластика, под который нарезано (PLA, PETG, TPU…)
+  grams       REAL,                         -- расход по слайсу, г
+  seconds     INTEGER,                      -- время печати по слайсу, с
+  status      TEXT NOT NULL,                -- printing | done | failed: итог по отчёту принтера
+  finished_at TEXT);                        -- когда принтер сообщил итог; NULL — пока печатается
+
+CREATE TABLE IF NOT EXISTS spools(
+  material TEXT PRIMARY KEY,                -- тип пластика; одна активная катушка на тип
+  net_g    REAL NOT NULL,                   -- вес пластика на новой катушке, г (обычно 1000)
+  left_g   REAL NOT NULL,                   -- сколько осталось, г; уменьшается после успешной печати
+  updated  TEXT NOT NULL);                  -- когда последний раз меняли вручную или списывали
+
 CREATE TABLE IF NOT EXISTS counters(
   name  TEXT PRIMARY KEY,                   -- 'tokens': накопленный расход за всё время
   value TEXT NOT NULL);
@@ -204,6 +221,50 @@ def counter_put(value, name='tokens'):
                   (name, json.dumps(value)))
 
 
+# ---------- журнал печати и катушки ----------
+def print_add(name, file, material, grams, seconds):
+    with conn() as c:
+        return c.execute('INSERT INTO prints(ts,name,file,material,grams,seconds,status) VALUES(?,?,?,?,?,?,?)',
+                         (now(), name, file, material, grams, seconds, 'printing')).lastrowid
+
+
+def print_finish(ok):
+    """Итог приходит от принтера без ссылки на задание — закрываем последнее незавершённое.
+    Пластик списывается только за успешную печать: у сорванной расход неизвестен."""
+    with conn() as c:
+        r = c.execute("SELECT * FROM prints WHERE status='printing' ORDER BY id DESC LIMIT 1").fetchone()
+        if not r:
+            return None
+        c.execute('UPDATE prints SET status=?, finished_at=? WHERE id=?', ('done' if ok else 'failed', now(), r['id']))
+        if ok and r['material'] and r['grams']:
+            c.execute('UPDATE spools SET left_g=MAX(0, left_g-?), updated=? WHERE material=?',
+                      (r['grams'], now(), r['material'].upper()))
+        return dict(r)
+
+
+def prints(limit=20):
+    with conn() as c:
+        return [dict(r) for r in c.execute('SELECT * FROM prints ORDER BY id DESC LIMIT ?', (limit,))]
+
+
+def spool_set(material, net_g, left_g):
+    with conn() as c:
+        c.execute("""INSERT INTO spools(material,net_g,left_g,updated) VALUES(?,?,?,?)
+                     ON CONFLICT(material) DO UPDATE SET net_g=excluded.net_g, left_g=excluded.left_g,
+                     updated=excluded.updated""", (material.upper(), net_g, left_g, now()))
+
+
+def spools():
+    with conn() as c:
+        return [dict(r) for r in c.execute('SELECT * FROM spools ORDER BY material')]
+
+
+def spool_left(material):
+    with conn() as c:
+        r = c.execute('SELECT left_g FROM spools WHERE material=?', ((material or '').upper(),)).fetchone()
+    return r['left_g'] if r else None
+
+
 def selfcheck():
     """Полный круг: запись — чтение — удаление, на временной базе."""
     global DB
@@ -247,6 +308,19 @@ def selfcheck():
     assert counter_get() == {'in': 0, 'out': 0, 'calls': 0}, 'счётчик по умолчанию нулевой'
     counter_put({'in': 5, 'out': 7, 'calls': 1})
     assert counter_get()['out'] == 7
+    assert print_finish(True) is None, 'без незавершённой печати закрывать нечего'
+    spool_set('pla', 1000, 300)
+    assert spool_left('PLA') == 300, 'тип пластика без учёта регистра'
+    print_add('чехол', 'a.3mf', 'PLA', 45.5, 3600)
+    print_add('кронштейн', 'b.3mf', 'PLA', 20, 600)
+    assert print_finish(True)['name'] == 'кронштейн', 'закрывается последняя незавершённая'
+    assert spool_left('PLA') == 280, 'за успешную печать пластик списывается'
+    print_finish(False)
+    assert spool_left('PLA') == 280, 'за сорванную — нет'
+    assert [p['status'] for p in prints()] == ['done', 'failed']
+    print_add('большое', 'c.3mf', 'PLA', 500, 1)
+    print_finish(True)
+    assert spool_left('PLA') == 0, 'остаток не уходит в минус'
     print('db selfcheck ok:', DB)
 
 

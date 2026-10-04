@@ -451,6 +451,7 @@ $('save').onclick = () => {
 
 // содержимое печати живёт в разметке отдельно, а не сбоку — переносим в попап под кнопкой
 $('printer-menu').appendChild($('printer-panel'));
+setTimeout(() => loadJournal(), 0);
 $('printer-panel').hidden = false;
 
 // открытие/закрытие/позиционирование попапов теперь в solid/popovers.js (SolidJS) —
@@ -1343,7 +1344,43 @@ $('preflight').onclick = () => {
       errs ? 'err' : warns ? '' : 'ok');
 };
 
-async function toPrinter(path, btn, label){
+// ---------- катушки и журнал печати ----------
+const fmtMin = s => s >= 3600 ? `${Math.floor(s/3600)} ч ${Math.round(s%3600/60)} мин` : `${Math.round(s/60)} мин`;
+async function loadJournal(){
+  let d;
+  try{ d = await (await fetch('/api/prints')).json(); }catch(e){ return; }
+  $('spools').innerHTML = d.spools.length ? d.spools.map(sp => {
+    const pct = sp.net_g ? Math.round(sp.left_g / sp.net_g * 100) : 0;
+    return `<div class="spool${pct < 15 ? ' low' : ''}"><b>${esc(sp.material)}</b>
+      <span class="bar" title="${Math.round(sp.left_g)} из ${Math.round(sp.net_g)} г"><i style="width:${pct}%"></i></span>
+      <span>${Math.round(sp.left_g)} г <button class="sm" data-sp="${esc(sp.material)}" title="указать остаток">изм.</button></span></div>`;
+  }).join('') : '<div class="hint">Катушек нет — добавь, чтобы считать остаток.</div>';
+  $('spools').querySelectorAll('[data-sp]').forEach(b => b.onclick = () => {
+    const sp = d.spools.find(x => x.material === b.dataset.sp);
+    const v = prompt(`Сколько грамм ${sp.material} осталось на катушке? (взвесь без катушки или напиши ${Math.round(sp.net_g)}, если новая)`,
+                     Math.round(sp.left_g));
+    if(v !== null && Number.isFinite(+v)) saveSpool(sp.material, sp.net_g, +v);
+  });
+  const ICON = {printing: '⏳', done: '✓', failed: '✕'};
+  $('journal').innerHTML = d.prints.map(p => `<div class="jr" title="${esc(p.file || '')}"><span>${ICON[p.status] || ''}</span>
+    <span><b>${esc(p.name || 'деталь')}</b> · ${esc(p.ts.slice(5, 16))}</span>
+    <span>${p.grams ? Math.round(p.grams) + ' г' : ''}${p.seconds ? ' · ' + fmtMin(p.seconds) : ''}</span></div>`).join('');
+}
+async function saveSpool(material, net, left){
+  const r = await fetch('/api/spools', {method: 'POST', body: JSON.stringify({material, net_g: net, left_g: left})});
+  const j = await r.json();
+  if(j.error) return say(j.error, 'err');
+  say(`катушка ${material.toUpperCase()}: ${Math.round(Math.min(left, net))} г`, 'ok'); loadJournal();
+}
+$('spool-add').onclick = () => {
+  const m = prompt('Тип пластика (PLA, PETG, TPU…):', 'PLA'); if(!m) return;
+  const net = prompt('Вес пластика на новой катушке, г:', '1000'); if(net === null || !Number.isFinite(+net)) return;
+  saveSpool(m.trim(), +net, +net);
+};
+// что печатаем — для журнала: имя группы детали или первого тела на столе
+const jobName = () => objects.find(o => (o.plate || 0) === printPlate() && o.vis && !o.hole)?.name || 'деталь';
+
+async function toPrinter(path, btn, label, force = false){
   const pre = runPreflight(), errs = pre.items.filter(i => i.level === 'err');
   if(errs.length && !confirm('Перед печатью нашлись ошибки:\n\n' + errs.map(i => '• ' + i.text).join('\n') +
                              '\n\nВсё равно отправить на принтер?')) return;
@@ -1354,10 +1391,17 @@ async function toPrinter(path, btn, label){
     const r = await fetch(path, {method:'POST', body: out, headers:{
       'x-support': $('sup').checked ? '1' : '0',
       'x-infill': $('infill').value, 'x-pattern': $('pattern').value, 'x-walls': $('walls').value, 'x-bed': $('bed').value,
-      'x-material': neededMaterial()}});
+      'x-material': neededMaterial(), 'x-name': encodeURIComponent(jobName()), 'x-force': force ? '1' : '0'}});
     const j = await r.json();
+    if(r.status === 409 && j.code === 'low_spool'){
+      done();
+      if(confirm(j.error + '.\n\nПечатать всё равно? (если катушку уже сменили — поправь остаток в «Катушки и журнал»)'))
+        return toPrinter(path, btn, label, true);
+      return say(j.error, 'err');
+    }
     if(r.status === 409){ say(j.error, 'err'); return done(); }   // не тот пластик — совет уже в тексте
     if(j.error) throw new Error(j.error);
+    if(j.printing) loadJournal();
     say((j.printing ? 'печать запущена: ' : 'залито на принтер: ') + j.file
         + (j.support ? ' · с поддержками' : '') + ` · заполнение ${j.infill}%`, 'ok');
   }catch(e){ say(e.message.split('\n')[0] + ' — проверь ~/.pen3d.json и LAN Only Mode', 'err'); }
@@ -1442,6 +1486,7 @@ loadLog();
 // статус принтера: опрашиваем сервер, он держит MQTT сам
 const STATES = {IDLE:'простаивает', RUNNING:'печатает', PAUSE:'на паузе',
                 FINISH:'печать закончена', FAILED:'сбой печати', PREPARE:'готовится', SLICING:'слайсит'};
+let lastPrState = null;
 async function pollPrinter(){
   const box = $('printer');
   try{
@@ -1453,6 +1498,8 @@ async function pollPrinter(){
       return;
     }
     const busy = p.state === 'RUNNING' || p.state === 'PREPARE';
+    if(lastPrState && lastPrState !== p.state && (p.state === 'FINISH' || p.state === 'FAILED')) loadJournal();
+    lastPrState = p.state;
     const wasBed = bedNow;
     bedNow = busy ? (p.bed ?? null) : null;      // вне печати показываем расчёт по пластине
     if (Math.round(wasBed ?? -1) !== Math.round(bedNow ?? -1)) markPlates();
