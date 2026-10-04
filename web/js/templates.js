@@ -48,6 +48,20 @@ export const PHONES = {
     usb: {from: 35.81, len: 12.45, h: 6.6},
     ports: [19.75, 24.26, 28.89, 42.74, 47.37, 50.38, 53.38, 56.39],   // 31.31 и 40.31 — винты
   },
+  'iphone-16-pro': {
+    name: 'iPhone 16 Pro', source: 'Apple Dimensional Drawings, 2024-09-19',
+    L: 149.61, W: 71.45, H: 8.25, R: 13.8,      // угол заканчивается в 19.23 мм от края
+    bump: 4.28, glass: 1.0, btn: 0.45,          // три камеры выступают на 4.28
+    // квадратный остров 1.04–46.54 от верха и от правого бока; вспышка Ø6.92, микрофон внутри
+    camera: {top: 23.8, side: 23.8, len: 47.6, wid: 47.6, r: 13},
+    buttons: [{name: 'Action', side: 'left', at: 34.08, len: 7},
+              {name: 'громкость +', side: 'left', at: 48.23, len: 10},
+              {name: 'громкость −', side: 'left', at: 62.43, len: 10},
+              {name: 'боковая кнопка', side: 'right', at: 55.33, len: 18}],
+    open: [{name: 'Camera Control', side: 'right', at: 98.19, len: 29.7, h: 6.3}],
+    usb: {from: 35.72, len: 12.45, h: 6.6},
+    ports: [19.70, 24.21, 28.79, 42.64, 47.23, 50.24, 53.24, 56.25],   // 30.86 и 40.58 — винты
+  },
   'iphone-15': {
     name: 'iPhone 15', source: 'Apple Dimensional Drawings, 2023-10-10',
     L: 147.64, W: 71.63, H: 7.81, R: 12.5,
