@@ -1018,7 +1018,7 @@ view.addEventListener('pointerup', e => {
 // высота считается от центра, и арифметика координат. Здесь всё это делает клик:
 // нормаль грани выбирает поворот, отверстие начинается на 0.5 мм снаружи и уходит внутрь.
 let cutting = false;
-function cutOff(){ cutting = false; cutGhost.visible = false; $('cut').classList.remove('on'); $('cut-opts').hidden = true; $('stage').classList.remove('cutting'); }
+function cutOff(){ cutting = false; cutGhost.visible = false; $('cut-tip').hidden = true; $('cut').classList.remove('on'); $('cut-opts').hidden = true; $('stage').classList.remove('cutting'); }
 $('cut').onclick = () => {
   if(cutting) return cutOff(), say('вырез выключен');
   if(measuring) measureOff();
@@ -1084,7 +1084,7 @@ function cutClick(){
   if(r.err) return say(r.err, 'err');
   push();
   const o = {...r.o, id: nextId++};
-  objects.push(o); selId = o.id; cutGhost.visible = false; sync();
+  objects.push(o); selId = o.id; cutGhost.visible = false; $('cut-tip').hidden = true; sync();
   say(`${o.name}: ${r.info} — поправь в свойствах, если надо`, 'ok');
 }
 // призрак выреза под курсором: тот же расчёт, что и у клика, поэтому что видно — то и встанет
@@ -1096,15 +1096,19 @@ view.addEventListener('pointermove', e => {
   if(!cutting || e.buttons) return;
   pointerNdc(e); ray.setFromCamera(ndc, cam);
   const r = cutPlan();
-  if(r.err){ cutGhost.visible = false; return; }
+  const tip = $('cut-tip'), box = $('stage').getBoundingClientRect();
+  if(r.err){ cutGhost.visible = false; tip.hidden = true; return; }
+  // подпись у курсора: строка статуса в шапке далеко от взгляда и в узком окне обрезается
+  tip.textContent = r.info; tip.hidden = false;
+  tip.style.left = Math.min(e.clientX - box.left, box.width - tip.offsetWidth - 20) + 'px';
+  tip.style.top = (e.clientY - box.top) + 'px';
   const g = geoOf(r.o), key = sig(g) + ':' + JSON.stringify(g.pts || '');
   if(key !== cutGhostSig){ cutGhost.geometry.dispose(); cutGhost.geometry = unitGeo(g); cutGhostSig = key; }
   const mat = cutGhost.material;
   objToMesh(r.o, cutGhost);
   cutGhost.material = mat; cutGhost.visible = true;
-  say(r.info);
 });
-view.addEventListener('pointerleave', () => { cutGhost.visible = false; });
+view.addEventListener('pointerleave', () => { cutGhost.visible = false; $('cut-tip').hidden = true; });
 
 // ---------- измерение расстояния ----------
 // не CAD-констрейнты, просто «поставил две точки — увидел мм»: клик по телу или по столу

@@ -225,6 +225,9 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
     background:var(--glass); border:1px solid var(--hair); border-radius:11px; box-shadow:0 6px 24px var(--shadow);
     backdrop-filter:blur(8px); z-index:3; }
   #cut-opts[hidden] { display:none; }
+  #cut-tip { position:absolute; z-index:4; pointer-events:none; padding:3px 7px; border-radius:6px; white-space:nowrap;
+    font:11px/1.3 ui-monospace,monospace; background:var(--ink); color:var(--bg); transform:translate(14px, 14px); }
+  #cut-tip[hidden] { display:none; }
   #cut-opts .cut-head { display:flex; align-items:center; justify-content:space-between; padding:0 0 2px 4px; }
   #cut-opts .cut-head b { font-size:12px; font-weight:600; }
   #cut-close { padding:0 7px; line-height:20px; border-color:transparent; background:transparent; color:var(--dim); }
@@ -398,6 +401,7 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
       <button id="cut" title="Вырез по клику: кликни по грани детали — отверстие встанет поперёк неё (Esc — выйти)"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="12" cy="12" r="3.5"/></svg></button>
       <button id="measure" title="Измерить расстояние между двумя точками (Esc — выйти)"><svg viewBox="0 0 24 24"><rect x="2.5" y="8" width="19" height="8" rx="1.5"/><path d="M6.5 8v3M10 8v4.5M13.5 8v3M17 8v4.5"/></svg></button>
     </div>
+    <div id="cut-tip" hidden></div>
     <div id="cut-opts" hidden>
       <div class="cut-head"><b>Вырез по клику</b><button class="sm" id="cut-close" title="Закрыть (Esc)" aria-label="Закрыть">×</button></div>
       <label class="f col">форма <select id="cut-shape">
