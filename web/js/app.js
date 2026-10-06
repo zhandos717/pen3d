@@ -9,6 +9,7 @@ import { PROMPT, PROVIDERS, sanitize } from './ai.js';
 import { gearSketch, roundedRect } from './gear.js';
 import { t } from './i18n.js';
 import { preflight } from './preflight.js';
+import { listRows, partName, nextName, liveConnectors } from './parts.js';
 import { TEMPLATES, defaults as tplDefaults, clampValues } from './templates.js';
 import { FITS, DEFAULT_CAL, gapFor, couponObjects, COUPON_GAPS } from './fit.js';
 import { evalExpr, paramValues, applyParams, refsParam, usersOf, idents, NAME_RE, JS_RESERVED } from './params.js';
@@ -21,6 +22,7 @@ const say = (t, k='') => { const s = $('status'); s.textContent = t; s.className
 // ---------- данные ----------
 // объект: {id,name,type:'box'|'cyl'|'poly'|'sketch',x,y,z,w,d,h,rot,sides,hole,vis,pts?}
 let objects = [], nextId = 1, selId = null, params = [];
+let parts = {}, connectors = [];      // имена деталей по o.grp; коннекторы на гранях тел (parts.js)
 const byId = id => objects.find(o => o.id === id);
 // калибровка посадок — свойство принтера, а не проекта: живёт в браузере
 let fitCal = +localStorage.fitCal || DEFAULT_CAL;
@@ -323,7 +325,8 @@ function sync(){
   });
   const s = sel();
   if(s && s.vis && !showResult && !sketching && !cutting) gizmo.attach(meshOf(s.id)); else gizmo.detach();
-  renderList(); renderParams(); fillProps(); updateDims(); updateGhost();
+  connectors = liveConnectors(connectors, objects);
+  renderList(); renderParams(); fillProps(); updateDims(); updateGhost(); drawConnectors();
   if(overhangMesh){ clearOverhang(); $('pre').hidden = true; }   // после правки результат проверки устарел
   if(showResult) rebuildSoon();
   persist();
@@ -363,7 +366,7 @@ try{
   if(saved){ hist.push(...saved.hist); redoStack.push(...saved.redo); }
 }catch(e){}
 const saveHist = () => { try{ localStorage.hist = JSON.stringify({hist, redo: redoStack}); }catch(e){} };
-const snapshot = () => JSON.stringify({objects, nextId, params});
+const snapshot = () => JSON.stringify({objects, nextId, params, parts, connectors});
 // push() — состояние ДО изменения; вызывать перед мутацией objects
 function push(){ hist.push(snapshot()); if(hist.length > 100) hist.shift(); redoStack.length = 0; saveHist(); }
 // Неполный объект (чужой или старый файл проекта) давал NaN в габаритах и матрицах,
@@ -381,6 +384,8 @@ function restore(s){
   const d = typeof s === 'string' ? JSON.parse(s) : s;   // из истории приходит строка, из базы — объект
   if(!Array.isArray(d?.objects)) throw new Error('битый файл проекта');
   objects = d.objects.map(fill); params = Array.isArray(d.params) ? d.params : [];
+  parts = d.parts && typeof d.parts === 'object' ? d.parts : {};
+  connectors = Array.isArray(d.connectors) ? d.connectors : [];
   nextId = +d.nextId || Math.max(0, ...objects.map(o => o.id)) + 1;
   if(!byId(selId)) selId = null;
   sync();
@@ -476,7 +481,7 @@ $('file').onchange = async e => {
   e.target.value = '';
 };
 $('clear').onclick = () => { if(!objects.length) return; if(!confirm('Очистить проект?')) return;
-  push(); objects = []; params = []; selId = null; nextId = 1; sync(); say('новый проект'); };
+  push(); objects = []; params = []; parts = {}; connectors = []; selId = null; nextId = 1; sync(); say('новый проект'); };
 
 // ---------- объекты ----------
 // новую фигуру ставим справа от того, что уже на столе, а не поверх него
@@ -586,10 +591,25 @@ function select(id){
 function renderList(){
   const L = $('list'); L.innerHTML = '';
   $('empty').hidden = objects.length > 0;
-  [...objects].reverse().forEach(o => {
-    const row = document.createElement('div');
+  const selGrp = sel()?.grp;
+  for(const r of listRows(objects, parts)){
+    if(r.kind === 'part'){
+      const row = document.createElement('div');
+      row.className = 'part' + (r.grp === selGrp ? ' sel' : '');
+      row.innerHTML = `<span class="nm">${esc(r.name)}</span><span class="cnt">${r.count}</span>`;
+      row.onclick = () => select(objects.find(o => o.grp === r.grp)?.id);
+      const nm = row.querySelector('.nm');
+      nm.ondblclick = e => { e.stopPropagation(); nm.contentEditable = 'true'; nm.focus();
+        document.execCommand('selectAll', false, null); };
+      nm.onblur = () => { nm.contentEditable = 'false';
+        const v = nm.textContent.trim(); if(v && v !== r.name){ push(); parts[r.grp] = {...parts[r.grp], name: v}; sync(); } };
+      nm.onkeydown = e => { if(e.key === 'Enter'){ e.preventDefault(); nm.blur(); } e.stopPropagation(); };
+      L.appendChild(row);
+      continue;
+    }
+    const o = r.o, row = document.createElement('div');
     row.className = 'obj' + (o.id === selId ? ' sel' : '') + (o.hole ? ' hole' : '')
-                  + (o.vis ? '' : ' hidden') + (o.grp ? ' grp' : '');
+                  + (o.vis ? '' : ' hidden') + (r.inPart ? ' inpart' : '');
     row.dataset.id = o.id;
     row.innerHTML = `<span class="sw" style="background:${o.hole ? '' : esc(o.color || '#3fae8c')}"></span><span class="nm">${esc(o.name)}</span>
       <button title="отверстие / тело">${o.hole ? '⊖' : '⊕'}</button><button title="видимость">${o.vis ? '👁' : '—'}</button>`;
@@ -604,7 +624,7 @@ function renderList(){
       say(o.hole ? 'теперь отверстие' : 'теперь тело'); };
     bv.onclick = e => { e.stopPropagation(); push(); o.vis = !o.vis; sync(); };
     L.appendChild(row);
-  });
+  }
 }
 const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 
@@ -642,7 +662,8 @@ function fillProps(){
     : o.fit ? 'натяг при текущей калибровке — без зазора'
     : 'отверстие напечатается уже заданного — для вала выбери посадку';
   const n = o.grp ? objects.filter(x => x.grp === o.grp).length : 0;
-  $('grp-status').textContent = n ? `⛓ в группе из ${n} тел — двигаются вместе` : 'не связана ни с чем';
+  $('grp-status').textContent = n ? `⛓ деталь «${partName(o, parts)}» — ${n} тел, двигаются вместе` : 'не связана ни с чем';
+  renderConnList(o);
   $('ungroup').style.display = n ? '' : 'none';
 }
 // Поворот вокруг петли: гизмо и матрица меша крутят вокруг центра, поэтому центр
@@ -769,6 +790,7 @@ $('tpl-add').onclick = () => {
   push();
   const first = nextId;
   list.forEach(o => objects.push({...o, id: nextId++, x: +(o.x + at.x).toFixed(3), y: +(o.y + at.y).toFixed(3), grp}));
+  parts[grp] = {name: tpl.id === 'phone-case' ? `Чехол ${$('tpl-fields').querySelector('[data-k=phone]')?.selectedOptions[0]?.textContent || ''}`.trim() : tpl.name};
   selId = first; sync(); renderTpl();
   say(`${tpl.name}: ${list.length} тел на столе` +
       (fixed.length ? ` · поправлено под допустимое: ${fixed.map(f => f.label.split(',')[0]).join(', ')}` : ''),
@@ -813,6 +835,7 @@ $('fit-coupon').onclick = () => {
   push();
   const grp = 'fit' + nextId;
   list.forEach((o, i) => objects.push({...o, id: nextId++, grp: i < list.length - 1 ? grp : undefined}));
+  parts[grp] = {name: 'Тест посадки'};
   selId = objects[objects.length - list.length].id; sync(); showTab('props');
   say('пластинка на столе, результат отметь в ƒx', 'ok');
 };
@@ -1024,16 +1047,21 @@ view.addEventListener('pointerup', e => {
 const CUT_TEXT = {
   cut:  {title: 'Вырез по клику', depth: 'глубина, мм', hint: 'Кликни по грани — вырез встанет поперёк неё. Esc — выйти.',
          on: 'кликни по грани детали — вырез встанет поперёк неё', off: 'вырез выключен'},
+  conn: {title: 'Коннектор по клику', depth: '', hint: 'Кликни по грани — на ней встанет коннектор: точка и направление для сопряжения. Esc — выйти.',
+         on: 'кликни по грани тела — встанет коннектор', off: 'коннекторы выключены'},
   boss: {title: 'Нарастить по клику', depth: 'высота, мм', hint: 'Кликни по грани — на ней вырастет тело. Esc — выйти.',
          on: 'кликни по грани детали — на ней вырастет тело', off: 'наращивание выключено'},
 };
 function cutOff(){ cutting = false; cutGhost.visible = false; $('cut-tip').hidden = true; sync();
-  $('cut').classList.remove('on'); $('boss').classList.remove('on'); $('cut-opts').hidden = true; $('stage').classList.remove('cutting'); }
+  $('cut').classList.remove('on'); $('boss').classList.remove('on'); $('conn').classList.remove('on'); $('cut-opts').hidden = true; $('stage').classList.remove('cutting'); }
 function cutStart(mode){
   if(cutting && cutMode === mode) return cutOff(), say(CUT_TEXT[mode].off);
   if(measuring) measureOff();
   cutMode = mode; cutting = true;
   $('cut').classList.toggle('on', mode === 'cut'); $('boss').classList.toggle('on', mode === 'boss');
+  $('conn').classList.toggle('on', mode === 'conn');
+  // у коннектора нет формы и размера — только точка и направление
+  $('cut-sizes').hidden = mode === 'conn';
   $('cut-opts').hidden = false; $('stage').classList.add('cutting'); sync();
   const T = CUT_TEXT[mode];
   $('cut-title').textContent = T.title; $('cut-d-label').textContent = T.depth; $('cut-hint').textContent = T.hint;
@@ -1045,6 +1073,7 @@ function cutStart(mode){
 }
 $('cut').onclick = () => cutStart('cut');
 $('boss').onclick = () => cutStart('boss');
+$('conn').onclick = () => cutStart('conn');
 // крепёж: винт — номинальный диаметр с посадкой «свободная» (зазор даёт калибровка принтера);
 // гайка — шестигранник по размеру под ключ ISO 4032 с запасом 0.3 и глубиной высота+0.4
 const SCREWS = {'M2.5': 2.5, M3: 3, M4: 4, M5: 5};
@@ -1064,8 +1093,9 @@ const CUT_SNAP = 2;
 function cutPlan(){
   const targets = raw.children.filter(m => m.visible && !objects.find(o => o.id === m.userData.id)?.hole);
   if(resultMesh) targets.push(resultMesh);
-  const hit = ray.intersectObjects(targets)[0];
-  if(!hit?.face) return {err: 'мимо детали — кликни по её грани'};
+  const hit = ray.intersectObjects(cutMode === 'conn' ? targets.filter(m => m !== resultMesh) : targets)[0];
+  if(!hit?.face) return {err: cutMode === 'conn' && resultMesh ? 'коннектор ставится на тело — выключи «Результат»' : 'мимо детали — кликни по её грани'};
+  if(cutMode === 'conn') return connPlan(hit);
   const num = id => evalExpr($(id).value, paramValues(params).vals);
   const shape = $('cut-shape').value, nut = NUTS[shape];
   const W = shape in SCREWS ? SCREWS[shape] : nut ? +((nut.flats + .3) * 2/Math.sqrt(3)).toFixed(2) : num('cut-w');
@@ -1102,9 +1132,59 @@ function cutPlan(){
   const where = centered.length === 2 ? 'по центру грани' : centered.length ? 'по центру по одной оси' : '';
   return {o, info: `${size}, ${boss ? 'высота' : 'глубина'} ${D}` + (where ? ` · ${where}` : '')};
 }
+// Коннектор хранится в единичных координатах меша тела (до масштаба и поворота): так он
+// остаётся в той же точке грани, что бы с телом ни делали. Привязка к центру — та же, что у выреза.
+function connPlan(hit){
+  const m = hit.object, n = hit.face.normal.clone().transformDirection(m.matrixWorld);
+  const axis = Math.abs(n.y) >= Math.abs(n.x) && Math.abs(n.y) >= Math.abs(n.z) ? 'y' : Math.abs(n.x) >= Math.abs(n.z) ? 'x' : 'z';
+  const p = hit.point.clone(), mid = new THREE.Box3().setFromObject(m).getCenter(new THREE.Vector3()), centered = [];
+  for(const k of ['x', 'y', 'z'].filter(k => k !== axis)){
+    if(Math.abs(p[k] - mid[k]) < CUT_SNAP){ p[k] = mid[k]; centered.push(k); }
+    else if(snap) p[k] = Math.round(p[k] * 2) / 2;
+  }
+  m.updateMatrixWorld();
+  const local = m.worldToLocal(p.clone()), ln = hit.face.normal.clone().normalize();
+  const body = m.userData.id, name = nextName('К', connectors.map(c => c.name));
+  const where = centered.length === 2 ? 'по центру грани' : centered.length ? 'по центру по одной оси' : '';
+  return {conn: {id: 'c' + Date.now(), name, body, p: local.toArray().map(v => +v.toFixed(5)), n: ln.toArray().map(v => +v.toFixed(5))},
+          where, info: `${name} на «${byId(body)?.name}»` + (where ? ` · ${where}` : '')};
+}
+// мировые точка и направление коннектора — по текущей матрице меша его тела
+function connWorld(c){
+  const m = meshOf(c.body); if(!m) return null;
+  m.updateMatrixWorld();
+  const p = m.localToWorld(new THREE.Vector3(...c.p));
+  const n = new THREE.Vector3(...c.n).applyMatrix3(new THREE.Matrix3().getNormalMatrix(m.matrixWorld)).normalize();
+  return {p, n};
+}
+const connGroup = new THREE.Group(); scene.add(connGroup);
+function drawConnectors(){
+  for(const ch of [...connGroup.children]){ connGroup.remove(ch); ch.dispose?.(); }
+  for(const c of connectors){
+    const w = connWorld(c); if(!w) continue;
+    const a = new THREE.ArrowHelper(w.n, w.p, 9, 0xf0b429, 3, 2);
+    a.line.material.depthTest = a.cone.material.depthTest = false; a.renderOrder = 999;
+    a.userData.conn = c.id; connGroup.add(a);
+  }
+}
+function renderConnList(o){
+  const box = $('p-conns'); if(!box) return;
+  const ids = new Set(o.grp ? objects.filter(x => x.grp === o.grp).map(x => x.id) : [o.id]);
+  const mine = connectors.filter(c => ids.has(c.body));
+  box.innerHTML = mine.length ? mine.map(c => `<span class="conn">${esc(c.name)}<span class="on">${esc(byId(c.body)?.name || '')}</span>
+      <button class="sm" data-c="${c.id}" title="удалить коннектор">×</button></span>`).join('')
+    : '<span class="hint">нет — поставь инструментом «коннектор по клику»</span>';
+  box.querySelectorAll('[data-c]').forEach(b => b.onclick = () => {
+    push(); connectors = connectors.filter(c => c.id !== b.dataset.c); sync(); say('коннектор удалён'); });
+}
+
 function cutClick(){
   const r = cutPlan();
   if(r.err) return say(r.err, 'err');
+  if(r.conn){
+    push(); connectors.push(r.conn); selId = r.conn.body; $('cut-tip').hidden = true; sync();
+    return say(`${r.conn.name} на «${byId(r.conn.body).name}»${r.where ? ' · ' + r.where : ''}`, 'ok');
+  }
   push();
   const o = {...r.o, id: nextId++};
   objects.push(o); selId = o.id; cutGhost.visible = false; $('cut-tip').hidden = true; sync();
@@ -1125,6 +1205,7 @@ view.addEventListener('pointermove', e => {
   tip.textContent = r.info; tip.hidden = false;
   tip.style.left = Math.min(e.clientX - box.left, box.width - tip.offsetWidth - 20) + 'px';
   tip.style.top = (e.clientY - box.top) + 'px';
+  if(r.conn){ cutGhost.visible = false; return; }
   const g = geoOf(r.o), key = sig(g) + ':' + JSON.stringify(g.pts || '');
   if(key !== cutGhostSig){ cutGhost.geometry.dispose(); cutGhost.geometry = unitGeo(g); cutGhostSig = key; }
   const mat = cutGhost.material;
@@ -1406,7 +1487,7 @@ $('spool-add').onclick = () => {
   saveSpool(m.trim(), +net, +net);
 };
 // что печатаем — для журнала: имя группы детали или первого тела на столе
-const jobName = () => objects.find(o => (o.plate || 0) === printPlate() && o.vis && !o.hole)?.name || 'деталь';
+const jobName = () => partName(objects.find(o => (o.plate || 0) === printPlate() && o.vis && !o.hole), parts);
 
 async function toPrinter(path, btn, label, force = false){
   const pre = runPreflight(), errs = pre.items.filter(i => i.level === 'err');
@@ -1680,15 +1761,17 @@ $('group').onclick = () => {
   const part = connectedTo(o);
   if(part.length < 2) return say('эта фигура ни с чем не соединена — двигать нечего вместе', 'err');
   const grp = 'g' + Date.now();
-  push(); part.forEach(x => x.grp = grp); sync();
-  say(`связано тел: ${part.length} · теперь двигаются вместе`, 'ok');
+  push(); part.forEach(x => x.grp = grp);
+  parts[grp] = {name: nextName('Деталь', Object.values(parts).map(p => p.name))};
+  sync();
+  say(`${parts[grp].name}: связано тел ${part.length}, двигаются вместе · переименовать — двойной клик в списке`, 'ok');
 };
 
 $('ungroup').onclick = () => {
   const o = sel(); if(!o) return say('выбери фигуру', 'err');
   if(!o.grp) return say('фигура и так сама по себе');
   const n = objects.filter(x => x.grp === o.grp).length;
-  push(); objects.forEach(x => { if(x.grp === o.grp) delete x.grp; });
+  push(); delete parts[o.grp]; objects.forEach(x => { if(x.grp === o.grp) delete x.grp; });
   sync(); say(`группа из ${n} тел разорвана`);
 };
 $('wipe-agent').onclick = () => {
@@ -2215,6 +2298,6 @@ try{
   }).observe({entryTypes: ['longtask']});
 }catch(e){}
 
-window.__dbg = () => ({objects, selId, долгиеЗадачи: window.__long.slice(-5), hist: hist.length, redo: redoStack.length, meshes: raw.children.length,
+window.__dbg = () => ({objects, selId, parts, connectors, arrows: connGroup.children.map(a => a.position.toArray().map(v => +v.toFixed(1))), долгиеЗадачи: window.__long.slice(-5), hist: hist.length, redo: redoStack.length, meshes: raw.children.length,
   result: !!resultMesh, plate: printPlate(),
   ghost: ghostDepth && {depth:+ghostDepth.size.y.toFixed(2), top:+ghostDepth.top.toFixed(2)}, cam: [+cam.position.x.toFixed(1), +orbit.target.x.toFixed(1)]});

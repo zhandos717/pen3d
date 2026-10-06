@@ -25,7 +25,7 @@ run: venv        ## запустить редактор на http://127.0.0.1:87
 lan: venv        ## то же, но слушать всю локальную сеть (без авторизации!)
 	$(PY) bridge.py --lan
 
-check: check-db check-slicer check-i18n check-hinge check-params check-templates check-preflight check-fillet check-material  ## прогнать все проверки
+check: check-db check-slicer check-i18n check-hinge check-params check-templates check-preflight check-fillet check-material check-parts  ## прогнать все проверки
 
 check-db: venv   ## база: запись, чтение, удаление на временном файле
 	$(PY) db.py
@@ -45,6 +45,9 @@ check-params:    ## параметры: формулы тел пересчиты
 
 check-material: venv  ## печать под нужный пластик: деталь под TPU не режется под PLA
 	$(PY) bridge.py --check-material
+
+check-parts:      ## детали и коннекторы: список по деталям, имена, осиротевшие коннекторы
+	node web/js/parts.test.mjs
 
 check-fillet:     ## скругление рёбер: сетка замкнута, объём срезан ровно на четверти
 	node web/js/fillet.test.mjs
