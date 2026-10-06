@@ -398,22 +398,23 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
       <div class="hr"></div>
       <button class="on" id="snap" title="Привязка: шаг 1 мм и 15°"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9.33 4v16M14.67 4v16M4 9.33h16M4 14.67h16"/></svg></button>
       <div class="hr"></div>
+      <button id="boss" title="Нарастить по клику: кликни по грани детали — на ней вырастет круг, овал или прямоугольник (Esc — выйти)"><svg viewBox="0 0 24 24"><rect x="3" y="12" width="18" height="8" rx="2"/><rect x="8.5" y="4" width="7" height="8" rx="1.5"/></svg></button>
       <button id="cut" title="Вырез по клику: кликни по грани детали — отверстие встанет поперёк неё (Esc — выйти)"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="12" cy="12" r="3.5"/></svg></button>
       <button id="measure" title="Измерить расстояние между двумя точками (Esc — выйти)"><svg viewBox="0 0 24 24"><rect x="2.5" y="8" width="19" height="8" rx="1.5"/><path d="M6.5 8v3M10 8v4.5M13.5 8v3M17 8v4.5"/></svg></button>
     </div>
     <div id="cut-tip" hidden></div>
     <div id="cut-opts" hidden>
-      <div class="cut-head"><b>Вырез по клику</b><button class="sm" id="cut-close" title="Закрыть (Esc)" aria-label="Закрыть">×</button></div>
+      <div class="cut-head"><b id="cut-title">Вырез по клику</b><button class="sm" id="cut-close" title="Закрыть (Esc)" aria-label="Закрыть">×</button></div>
       <label class="f col">форма <select id="cut-shape">
         <option value="round">круг</option><option value="oval">овал</option><option value="rect">прямоугольник</option>
-        <optgroup label="крепёж"><option value="M2.5">под винт M2.5</option><option value="M3">под винт M3</option>
+        <optgroup label="крепёж" id="cut-fasteners"><option value="M2.5">под винт M2.5</option><option value="M3">под винт M3</option>
         <option value="M4">под винт M4</option><option value="M5">под винт M5</option>
         <option value="nutM3">гнездо под гайку M3</option><option value="nutM4">гнездо под гайку M4</option>
         <option value="nutM5">гнездо под гайку M5</option></optgroup></select></label>
       <label class="f" id="cut-w-row">ширина, мм <input id="cut-w" type="text" inputmode="decimal" value="8"></label>
       <label class="f" id="cut-h-row">высота, мм <input id="cut-h" type="text" inputmode="decimal" value="4"></label>
-      <label class="f">глубина, мм <input id="cut-d" type="text" inputmode="decimal" value="6"></label>
-      <div class="hint">Кликни по грани — вырез встанет поперёк неё. Esc — выйти.</div>
+      <label class="f"><span id="cut-d-label">глубина, мм</span> <input id="cut-d" type="text" inputmode="decimal" value="6"></label>
+      <div class="hint" id="cut-hint">Кликни по грани — вырез встанет поперёк неё. Esc — выйти.</div>
     </div>
     <div class="views">
       <button class="icon" data-view="iso" title="1">3D</button>

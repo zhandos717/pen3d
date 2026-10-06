@@ -213,6 +213,7 @@ const raw = new THREE.Group(); scene.add(raw);
 // тёмная обводка на каждом теле — иначе однотонные тела впритык сливаются в одно пятно
 const EDGE_MAT = new THREE.LineBasicMaterial({color:0x0a0e12, transparent:true, opacity:.55});
 let resultMesh = null, showResult = false, overhangMesh = null;
+let cutting = false, cutMode = 'cut';   // режим «вырез/нарост по клику»: sync() не цепляет гизмо
 
 const matCache = new Map();
 function solidMat(color){
@@ -321,7 +322,7 @@ function sync(){
     objToMesh(o, m);
   });
   const s = sel();
-  if(s && s.vis && !showResult && !sketching) gizmo.attach(meshOf(s.id)); else gizmo.detach();
+  if(s && s.vis && !showResult && !sketching && !cutting) gizmo.attach(meshOf(s.id)); else gizmo.detach();
   renderList(); renderParams(); fillProps(); updateDims(); updateGhost();
   if(overhangMesh){ clearOverhang(); $('pre').hidden = true; }   // после правки результат проверки устарел
   if(showResult) rebuildSoon();
@@ -576,7 +577,7 @@ function select(id){
   hudOff = false;
   selId = id;
   const s = sel();
-  if(s && s.vis && !showResult && !sketching) gizmo.attach(meshOf(s.id)); else gizmo.detach();
+  if(s && s.vis && !showResult && !sketching && !cutting) gizmo.attach(meshOf(s.id)); else gizmo.detach();
   document.querySelectorAll('#list .obj').forEach(r => r.classList.toggle('sel', +r.dataset.id === selId));
   fillProps(); updateGhost(); if(s) say(s.name);
 }
@@ -1017,19 +1018,38 @@ view.addEventListener('pointerup', e => {
 // Вырез в боковой грани руками — это поворот на 90°, знание, что у повёрнутого тела
 // высота считается от центра, и арифметика координат. Здесь всё это делает клик:
 // нормаль грани выбирает поворот, отверстие начинается на 0.5 мм снаружи и уходит внутрь.
-let cutting = false;
-function cutOff(){ cutting = false; cutGhost.visible = false; $('cut-tip').hidden = true; $('cut').classList.remove('on'); $('cut-opts').hidden = true; $('stage').classList.remove('cutting'); }
-$('cut').onclick = () => {
-  if(cutting) return cutOff(), say('вырез выключен');
-  if(measuring) measureOff();
-  cutting = true; $('cut').classList.add('on'); $('cut-opts').hidden = false; $('stage').classList.add('cutting');
-  say('кликни по грани детали — вырез встанет поперёк неё');
+// Нарастить по клику — тот же инструмент наоборот: тело растёт от грани наружу и не вычитается.
+// Панель, предпросмотр и привязка общие, режим меняет только знак смещения и тип тела.
+
+const CUT_TEXT = {
+  cut:  {title: 'Вырез по клику', depth: 'глубина, мм', hint: 'Кликни по грани — вырез встанет поперёк неё. Esc — выйти.',
+         on: 'кликни по грани детали — вырез встанет поперёк неё', off: 'вырез выключен'},
+  boss: {title: 'Нарастить по клику', depth: 'высота, мм', hint: 'Кликни по грани — на ней вырастет тело. Esc — выйти.',
+         on: 'кликни по грани детали — на ней вырастет тело', off: 'наращивание выключено'},
 };
+function cutOff(){ cutting = false; cutGhost.visible = false; $('cut-tip').hidden = true; sync();
+  $('cut').classList.remove('on'); $('boss').classList.remove('on'); $('cut-opts').hidden = true; $('stage').classList.remove('cutting'); }
+function cutStart(mode){
+  if(cutting && cutMode === mode) return cutOff(), say(CUT_TEXT[mode].off);
+  if(measuring) measureOff();
+  cutMode = mode; cutting = true;
+  $('cut').classList.toggle('on', mode === 'cut'); $('boss').classList.toggle('on', mode === 'boss');
+  $('cut-opts').hidden = false; $('stage').classList.add('cutting'); sync();
+  const T = CUT_TEXT[mode];
+  $('cut-title').textContent = T.title; $('cut-d-label').textContent = T.depth; $('cut-hint').textContent = T.hint;
+  // крепёж — только для выреза; у нароста его форма сбрасывается на круг
+  $('cut-fasteners').hidden = mode === 'boss';
+  if(mode === 'boss' && !['round', 'oval', 'rect'].includes($('cut-shape').value)){ $('cut-shape').value = 'round'; }
+  $('cut-shape').onchange();
+  say(T.on);
+}
+$('cut').onclick = () => cutStart('cut');
+$('boss').onclick = () => cutStart('boss');
 // крепёж: винт — номинальный диаметр с посадкой «свободная» (зазор даёт калибровка принтера);
 // гайка — шестигранник по размеру под ключ ISO 4032 с запасом 0.3 и глубиной высота+0.4
 const SCREWS = {'M2.5': 2.5, M3: 3, M4: 4, M5: 5};
 const NUTS = {nutM3: {flats: 5.5, h: 2.4}, nutM4: {flats: 7, h: 3.2}, nutM5: {flats: 8, h: 4.7}};
-$('cut-close').onclick = () => { cutOff(); say('вырез выключен'); };
+$('cut-close').onclick = () => { cutOff(); say(CUT_TEXT[cutMode].off); };
 $('cut-shape').onchange = () => {
   const v = $('cut-shape').value, std = v in SCREWS || v in NUTS;
   $('cut-h-row').style.display = v === 'round' || std ? 'none' : '';
@@ -1060,24 +1080,27 @@ function cutPlan(){
     if(Math.abs(p[k] - mid[k]) < CUT_SNAP){ p[k] = mid[k]; centered.push(k); }
     else if(snap) p[k] = Math.round(p[k] * 2) / 2;
   }
-  // центр: от поверхности внутрь на (D/2 - 0.5), чтобы 0.5 мм торчало наружу и не осталось плёнки
-  const c = p.addScaledVector(n, -(D/2 - .5));
+  // вырез: центр внутрь на (D/2 - 0.5) — 0.5 мм торчит наружу, плёнки не остаётся.
+  // нарост: центр наружу на (D/2 - 0.3) — 0.3 мм уходит в грань, иначе между телами щель
+  const boss = cutMode === 'boss';
+  const c = p.addScaledVector(n, boss ? D/2 - .3 : -(D/2 - .5));
   const plate = Math.round(c.x / PLATE_GAP) === 1 && plates[1].group.visible ? 1 : 0;
   // повёрнутое тело: rz=90 кладёт высоту вдоль X (грань смотрит по X), rx=90 — вдоль плана Y;
   // тогда размер тела w (или d) становится видимой высотой выреза
   const rot = axis === 'y' ? {w: W, d: H} : axis === 'x' ? {w: H, d: W, rz: 90} : {w: W, d: H, rx: 90};
-  const base = {name: `вырез ${nextId}`, x: +(c.x - plate*PLATE_GAP).toFixed(2), y: +c.z.toFixed(2),
-                z: +(c.y - D/2).toFixed(2), h: D, hole: true, plate: plate || undefined, rx: 0, rz: 0, ...rot};
+  const base = {name: `${boss ? 'нарост' : 'вырез'} ${nextId}`, x: +(c.x - plate*PLATE_GAP).toFixed(2), y: +c.z.toFixed(2),
+                z: +(c.y - D/2).toFixed(2), h: D, hole: !boss, plate: plate || undefined, rx: 0, rz: 0, ...rot};
   const extra = shape === 'round' ? {type: 'cyl', w: W, d: W}
     : shape in SCREWS ? {type: 'cyl', w: W, d: W, fit: 'loose', name: `под винт ${shape}`}
     : nut ? {type: 'poly', sides: 6, w: W, d: W, name: `гайка ${shape.slice(3)}`}
     : shape === 'rect' ? {type: 'box'}
     : (g => ({type: 'sketch', pts: g.pts, w: g.size, d: g.size, round: undefined}))(roundedRect(rot.w, rot.d, Math.min(rot.w, rot.d)/2));
-  const o = fill({...base, ...extra, id: -1, color: '#d0455f', vis: true});
+  const o = fill({...base, ...extra, id: -1, color: boss ? '#3fae8c' : '#d0455f', vis: true});
+  if(boss && o.z < 0) return {err: 'нарост ушёл бы под стол — кликни выше или поверни деталь'};
   const size = shape in SCREWS ? `${shape}, зазор +${gap(o)} под твой принтер` : nut ? `под ключ ${nut.flats}`
     : shape === 'round' ? 'Ø' + W + ' мм' : W + '×' + H + ' мм';
   const where = centered.length === 2 ? 'по центру грани' : centered.length ? 'по центру по одной оси' : '';
-  return {o, info: `${size}, глубина ${D}` + (where ? ` · ${where}` : '')};
+  return {o, info: `${size}, ${boss ? 'высота' : 'глубина'} ${D}` + (where ? ` · ${where}` : '')};
 }
 function cutClick(){
   const r = cutPlan();
@@ -1105,6 +1128,7 @@ view.addEventListener('pointermove', e => {
   const g = geoOf(r.o), key = sig(g) + ':' + JSON.stringify(g.pts || '');
   if(key !== cutGhostSig){ cutGhost.geometry.dispose(); cutGhost.geometry = unitGeo(g); cutGhostSig = key; }
   const mat = cutGhost.material;
+  mat.color.set(cutMode === 'boss' ? 0x3fae8c : 0xff5a76);
   objToMesh(r.o, cutGhost);
   cutGhost.material = mat; cutGhost.visible = true;
 });
@@ -1966,7 +1990,7 @@ function drawLabels(){
   // мини-панель висит над выбранной фигурой, чтобы не бегать в угол сцены
   const hud = $('hud'), selHud = sel(), mHud = selHud && meshOf(selHud.id);
   // прячем на время перетаскивания: панель прыгала бы за фигурой и мешала целиться
-  if(mHud && mHud.visible && !sketching && !gizmo.dragging && !hudOff){
+  if(mHud && mHud.visible && !sketching && !cutting && !gizmo.dragging && !hudOff){
     mHud.updateMatrixWorld();
     const b = new THREE.Box3().setFromObject(mHud), c = new THREE.Vector3();
     b.getCenter(c);
