@@ -4,7 +4,7 @@
 import { roundedRect } from './gear.js';
 
 const BASE = {rot: 0, rx: 0, rz: 0, sides: 6, dia: 10, pitch: 1.5, shell: 0, openTop: false,
-              vis: true, hole: false, color: '#3fae8c'};
+              vis: true, hole: false, color: '#c3c8cf'};
 const box = (name, x, y, z, w, d, h, extra) => ({...BASE, name, type: 'box', x, y, z, w, d, h, ...extra});
 const cyl = (name, x, y, z, dia, h, extra) => ({...BASE, name, type: 'cyl', x, y, z, w: dia, d: dia, h, ...extra});
 const hole = o => ({...o, hole: true, color: '#d0455f'});

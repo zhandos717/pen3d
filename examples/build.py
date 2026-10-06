@@ -9,7 +9,7 @@ import bridge
 
 OUT = os.path.dirname(os.path.abspath(__file__))
 
-BASE = dict(rot=0, rx=0, rz=0, sides=6, dia=10, pitch=1.5, vis=True, hole=False, color='#2dd4a7')
+BASE = dict(rot=0, rx=0, rz=0, sides=6, dia=10, pitch=1.5, vis=True, hole=False, color='#c3c8cf')
 
 
 def scene(*objs):

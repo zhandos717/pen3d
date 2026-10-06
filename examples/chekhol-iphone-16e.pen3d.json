@@ -11,7 +11,7 @@
    "openTop": false,
    "vis": true,
    "hole": false,
-   "color": "#3fae8c",
+   "color": "#c3c8cf",
    "name": "корпус",
    "type": "sketch",
    "x": 0,
@@ -263,6 +263,7 @@
     ]
    ],
    "edge": 1.2,
+   "material": "TPU",
    "id": 1
   },
   {
@@ -1464,7 +1465,7 @@
    "openTop": false,
    "vis": true,
    "hole": false,
-   "color": "#3fae8c",
+   "color": "#c3c8cf",
    "name": "Action: накладка",
    "type": "box",
    "x": 42.075,
@@ -1473,6 +1474,7 @@
    "w": 7,
    "d": 2.4000000000000004,
    "h": 3.5,
+   "material": "TPU",
    "id": 12
   },
   {
@@ -1508,7 +1510,7 @@
    "openTop": false,
    "vis": true,
    "hole": false,
-   "color": "#3fae8c",
+   "color": "#c3c8cf",
    "name": "громкость +: накладка",
    "type": "box",
    "x": 27.925000000000004,
@@ -1517,6 +1519,7 @@
    "w": 10,
    "d": 2.4000000000000004,
    "h": 3.5,
+   "material": "TPU",
    "id": 14
   },
   {
@@ -1552,7 +1555,7 @@
    "openTop": false,
    "vis": true,
    "hole": false,
-   "color": "#3fae8c",
+   "color": "#c3c8cf",
    "name": "громкость −: накладка",
    "type": "box",
    "x": 13.725000000000001,
@@ -1561,6 +1564,7 @@
    "w": 10,
    "d": 2.4000000000000004,
    "h": 3.5,
+   "material": "TPU",
    "id": 16
   },
   {
@@ -1596,7 +1600,7 @@
    "openTop": false,
    "vis": true,
    "hole": false,
-   "color": "#3fae8c",
+   "color": "#c3c8cf",
    "name": "боковая кнопка: накладка",
    "type": "box",
    "x": 20.825000000000003,
@@ -1605,6 +1609,7 @@
    "w": 17,
    "d": 2.4000000000000004,
    "h": 3.5,
+   "material": "TPU",
    "id": 18
   },
   {

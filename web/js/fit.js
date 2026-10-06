@@ -27,12 +27,12 @@ export function couponObjects(at = {x: 0, y: 0}){
   const x0 = at.x - W/2 + 3 + step/2;
   const base = {rot: 0, rx: 0, rz: 0, sides: 3, dia: 10, pitch: 1.5, shell: 0, openTop: false, vis: true};
   const list = [{...base, name: 'Тест посадки', type: 'box', x: at.x, y: at.y, z: 0, w: W, d: 18, h: 5,
-                 hole: false, color: '#3fae8c'}];
+                 hole: false, color: '#c3c8cf'}];
   COUPON_GAPS.forEach((g, i) => list.push({...base, name: `зазор ${g.toFixed(1)}`, type: 'cyl',
     x: +(x0 + i*step).toFixed(2), y: at.y, z: -1, w: +(D + g).toFixed(2), d: +(D + g).toFixed(2), h: 7,
-    hole: true, color: '#3fae8c'}));
+    hole: true, color: '#c3c8cf'}));
   list.push({...base, name: 'метка ▲', type: 'poly', sides: 3, x: +(x0 - step/2 + 1.5).toFixed(2), y: at.y + 6,
-             z: 3.6, w: 3, d: 3, h: 2, hole: true, color: '#3fae8c'});
+             z: 3.6, w: 3, d: 3, h: 2, hole: true, color: '#c3c8cf'});
   list.push({...base, name: 'Штырь 8', type: 'cyl', x: at.x, y: at.y + 20, z: 0, w: D, d: D, h: 12,
              hole: false, color: '#e0a73f'});
   return list;

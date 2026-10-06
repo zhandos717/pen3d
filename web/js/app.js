@@ -15,6 +15,10 @@ import { FITS, DEFAULT_CAL, gapFor, couponObjects, COUPON_GAPS } from './fit.js'
 import { evalExpr, paramValues, applyParams, refsParam, usersOf, idents, NAME_RE, JS_RESERVED } from './params.js';
 
 const BED = 256;
+// Цвет детали по умолчанию — нейтральный серый, как глина в САПР: форма читается по свету,
+// а цвет остаётся для смысла (отверстия, выделение). Прежний зелёный по умолчанию в старых
+// проектах тоже считаем «без цвета» — выбранные вручную цвета не трогаем.
+const BODY = '#c3c8cf', LEGACY_BODY = new Set(['#3fae8c', '#2dd4a7']);
 const PLATE_GAP = 320;                 // сдвиг стола агента по X
 const $ = id => document.getElementById(id);
 const say = (t, k='') => { const s = $('status'); s.textContent = t; s.className = k; };
@@ -219,7 +223,7 @@ let cutting = false, cutMode = 'cut';   // режим «вырез/нарост 
 
 const matCache = new Map();
 function solidMat(color){
-  const c = color || '#3fae8c';
+  const c = color || BODY;
   if(!matCache.has(c)) matCache.set(c, new THREE.MeshStandardMaterial({color:c, roughness:.5, metalness:.05}));
   return matCache.get(c);
 }
@@ -258,9 +262,9 @@ function updateGhost(){
 let ghostDepth = null;
 
 const MAT = {
-  solid: new THREE.MeshStandardMaterial({color:0x3fae8c, roughness:.5, metalness:.05}),
+  solid: new THREE.MeshStandardMaterial({color:BODY, roughness:.55, metalness:.05}),
   hole:  new THREE.MeshStandardMaterial({color:0xd0455f, roughness:.6, transparent:true, opacity:.45}),
-  result:new THREE.MeshStandardMaterial({color:0x8fd6bd, roughness:.45, metalness:.05}),
+  result:new THREE.MeshStandardMaterial({color:0xd2d6dc, roughness:.5, metalness:.05}),
 };
 
 function objToMesh(o, m){
@@ -372,9 +376,10 @@ function push(){ hist.push(snapshot()); if(hist.length > 100) hist.shift(); redo
 // Неполный объект (чужой или старый файл проекта) давал NaN в габаритах и матрицах,
 // поэтому недостающие поля добираем значениями по умолчанию, а не доверяем файлу.
 const DEFAULTS = {type:'box', x:0, y:0, z:0, w:10, d:10, h:10, rot:0, rx:0, rz:0,
-                  sides:6, dia:10, pitch:1.5, hole:false, vis:true, color:'#3fae8c'};
+                  sides:6, dia:10, pitch:1.5, hole:false, vis:true, color:BODY};
 const fill = o => {
   const r = {...DEFAULTS, ...o};
+  if(LEGACY_BODY.has(String(r.color).toLowerCase())) r.color = BODY;
   for(const k of ['x','y','z','w','d','h','rot','rx','rz','sides','dia','pitch'])
     if(!Number.isFinite(+r[k])) r[k] = DEFAULTS[k];
   return r;
@@ -500,7 +505,7 @@ function add(type, extra={}){
                  sphere:'Шар', cone:'Конус', torus:'Кольцо', wedge:'Клин'};
   const o = {id: nextId, name: NAMES[type] + ' ' + nextId,
     type, x:0, y:0, z:0, w:30, d:30, h:10, rot:0, rx:0, rz:0, sides:6, dia:10, pitch:1.5,
-    color:'#3fae8c', shell:0, openTop:false, hole:false, vis:true, ...extra};
+    color:BODY, shell:0, openTop:false, hole:false, vis:true, ...extra};
   if(['cyl','poly','cone','sphere','torus','wedge'].includes(type)) o.h = 15;
   if(type === 'thread'){ o.h = 20; o.w = o.d = o.dia; }
   if(!('x' in extra)) Object.assign(o, freeSpot(o));
@@ -611,7 +616,7 @@ function renderList(){
     row.className = 'obj' + (o.id === selId ? ' sel' : '') + (o.hole ? ' hole' : '')
                   + (o.vis ? '' : ' hidden') + (r.inPart ? ' inpart' : '');
     row.dataset.id = o.id;
-    row.innerHTML = `<span class="sw" style="background:${o.hole ? '' : esc(o.color || '#3fae8c')}"></span><span class="nm">${esc(o.name)}</span>
+    row.innerHTML = `<span class="sw" style="background:${o.hole ? '' : esc(o.color || BODY)}"></span><span class="nm">${esc(o.name)}</span>
       <button title="отверстие / тело">${o.hole ? '⊖' : '⊕'}</button><button title="видимость">${o.vis ? '👁' : '—'}</button>`;
     row.onclick = () => select(o.id);
     const nm = row.querySelector('.nm'), [bh, bv] = row.querySelectorAll('button');
@@ -1125,7 +1130,7 @@ function cutPlan(){
     : nut ? {type: 'poly', sides: 6, w: W, d: W, name: `гайка ${shape.slice(3)}`}
     : shape === 'rect' ? {type: 'box'}
     : (g => ({type: 'sketch', pts: g.pts, w: g.size, d: g.size, round: undefined}))(roundedRect(rot.w, rot.d, Math.min(rot.w, rot.d)/2));
-  const o = fill({...base, ...extra, id: -1, color: boss ? '#3fae8c' : '#d0455f', vis: true});
+  const o = fill({...base, ...extra, id: -1, color: boss ? BODY : '#d0455f', vis: true});
   if(boss && o.z < 0) return {err: 'нарост ушёл бы под стол — кликни выше или поверни деталь'};
   const size = shape in SCREWS ? `${shape}, зазор +${gap(o)} под твой принтер` : nut ? `под ключ ${nut.flats}`
     : shape === 'round' ? 'Ø' + W + ' мм' : W + '×' + H + ' мм';
@@ -1832,7 +1837,7 @@ $('gen').onclick = async e => {
     if(!parsed) throw new Error('модель вернула не JSON: ' + text.slice(0, 120));
     const {list, dropped} = sanitize(parsed.objects);
     push();
-    list.forEach(o => objects.push({...o, id: nextId++, color:'#3fae8c', rx:0, rz:0, vis:true}));
+    list.forEach(o => objects.push({...o, id: nextId++, color:BODY, rx:0, rz:0, vis:true}));
     selId = null; sync(); loadLog();
     say(`добавлено фигур: ${list.length}` +
         (dropped.length ? ` · выброшены отверстия крупнее детали: ${dropped.join(', ')}` : ''),
