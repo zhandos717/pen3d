@@ -86,13 +86,18 @@ function stepOf(o, op, objToMesh, geo = unitGeo(o)){
 }
 
 // картинку-отверстие режем пачками фигур: см. unitGeoChunks
+// Полость режет только своё тело: стойки, бобышки и выступы внутри корпуса из той же
+// детали — обычное дело, а общая полость их съедала. Поэтому полое тело считается
+// отдельной цепочкой и складывается с остальными уже готовым.
+function pieceOf(o, objToMesh){
+  const c = innerOf(o), s = stepOf(o, 'add', objToMesh);
+  return c ? {op: 'add', sub: [s, stepOf(c, 'cut', objToMesh)]} : s;
+}
 export function partSteps(g, objToMesh){
   const solids = dedupe(g.solids);
   if(!solids.length) return null;
-  const steps = [stepOf(solids[0], 'add', objToMesh)];
-  solids.slice(1).forEach(o => steps.push(stepOf(o, 'add', objToMesh)));
+  const steps = solids.map(o => pieceOf(o, objToMesh));
   dedupe(g.keeps).forEach(o => steps.push(stepOf(o, 'keep', objToMesh)));
-  g.cavities.forEach(o => steps.push(stepOf(o, 'cut', objToMesh)));
   dedupe(g.holes).map(grow).forEach(o => unitGeoChunks(o).forEach(geo => steps.push(stepOf(o, 'cut', objToMesh, geo))));
   return steps;
 }
@@ -124,7 +129,6 @@ export function buildResult(objects, objToMesh, mat){
   if(loose) steps.push({...runPart(loose), op: 'add'});
   if(!steps.length) return null;
   dedupe(L0.keeps).forEach(o => steps.push(stepOf(o, 'keep', objToMesh)));
-  L0.cavities.forEach(o => steps.push(stepOf(o, 'cut', objToMesh)));
   dedupe(L0.holes).map(grow).forEach(o => unitGeoChunks(o).forEach(geo => steps.push(stepOf(o, 'cut', objToMesh, geo))));
   return meshOfResult(steps.length === 1 ? steps[0] : runPart(steps), mat);
 }
