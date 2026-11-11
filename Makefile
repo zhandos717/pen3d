@@ -25,7 +25,7 @@ run: venv        ## запустить редактор на http://127.0.0.1:87
 lan: venv        ## то же, но слушать всю локальную сеть (без авторизации!)
 	$(PY) bridge.py --lan $(if $(PORT),--port $(PORT))
 
-check: check-db check-slicer check-i18n check-hinge check-params check-templates check-preflight check-fillet check-material check-parts check-text check-explode check-image  ## прогнать все проверки
+check: check-db check-slicer check-i18n check-hinge check-params check-templates check-preflight check-fillet check-material check-parts check-text check-explode check-image check-hollow  ## прогнать все проверки
 
 check-db: venv   ## база: запись, чтение, удаление на временном файле
 	$(PY) db.py
@@ -48,6 +48,9 @@ check-material: venv  ## печать под нужный пластик: дет
 
 check-parts:      ## детали и коннекторы: список по деталям, имена, осиротевшие коннекторы
 	node web/js/parts.test.mjs
+
+check-hollow:     ## полые детали: вырез внутри детали не трогает соседнюю, стенка у эскиза
+	node web/js/hollow.test.mjs
 
 check-image:      ## рельеф из картинки: кольцо — одна дырка, мелочь < 1 мм отбрасывается
 	node web/js/image.test.mjs
