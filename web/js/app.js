@@ -2,7 +2,9 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { unitGeo, hingeShift } from './geometry.js';
-import { textShapes } from './textshape.js';
+import { textShapes, dropSmall } from './textshape.js';
+import { imageShapes, imageReady, importImage, setImageReady, srcKey } from './imageshape.js';
+import { explodePlan, ease } from './explode.js';
 import { parseStl } from './stl-import.js';
 import { buildResult, holeGhost } from './csg.js';
 import { meshToStlAsync } from './stl.js';
@@ -220,7 +222,7 @@ const raw = new THREE.Group(); scene.add(raw);
 // тёмная обводка на каждом теле — иначе однотонные тела впритык сливаются в одно пятно
 const EDGE_MAT = new THREE.LineBasicMaterial({color:0x0a0e12, transparent:true, opacity:.55});
 let resultMesh = null, showResult = false, overhangMesh = null;
-let cutting = false, cutMode = 'cut';   // режим «вырез/нарост по клику»: sync() не цепляет гизмо
+let cutting = false, cutMode = 'cut', exT = 0;   // exT — степень разбора 0..1, только вид   // режим «вырез/нарост по клику»: sync() не цепляет гизмо
 
 const matCache = new Map();
 function solidMat(color){
@@ -306,6 +308,9 @@ const sig = o => o.type === 'poly' ? 'poly:' + o.sides
   : o.type === 'sketch' ? 'sketch:' + JSON.stringify(o.pts) + (o.edge > 0 ? `:${o.edge}:${o.w}:${o.h}` : '')   // скругление в единичной геометрии зависит от пропорций
   : o.type === 'thread' ? `thread:${o.dia}:${o.pitch}:${o.h}`
   : o.type === 'text' ? `text:${o.text}:${o.font}:${o.bold !== false}`
+  // мелочь отбрасывается по размеру в мм — геометрия зависит от w и d; готовность растра в
+  // ключе нужна, чтобы заглушка сменилась контуром, когда картинка догрузится
+  : o.type === 'image' ? `image:${o.img ? srcKey(o.img) : ''}:${o.thr}:${o.eps}:${o.w}:${o.d}:${o.img && imageReady(o.img, o.thr ?? 180, o.eps ?? .8)}`
   : o.type === 'stl' ? 'stl:' + o.id            // точки импорта неизменны — не перестраивать зря
   : o.type;
 
@@ -330,10 +335,11 @@ function sync(){
     objToMesh(o, m);
   });
   const s = sel();
-  if(s && s.vis && !showResult && !sketching && !cutting) gizmo.attach(meshOf(s.id)); else gizmo.detach();
-  connectors = liveConnectors(connectors, objects);
+  if(s && s.vis && !showResult && !sketching && !cutting && !exT) gizmo.attach(meshOf(s.id)); else gizmo.detach();
+  connectors = liveConnectors(connectors, objects); exPlan = null;
   renderList(); renderParams(); fillProps(); updateDims(); updateGhost(); drawConnectors();
-  if(overhangMesh){ clearOverhang(); $('pre').hidden = true; }   // после правки результат проверки устарел
+  if(overhangMesh){ clearOverhang(); $('pre').hidden = true; }
+  if(exT) applyExplode();   // sync расставил меши по собранному положению — разбор поверх   // после правки результат проверки устарел
   if(showResult) rebuildSoon();
   persist();
 }
@@ -476,6 +482,7 @@ $('open').onclick = () => $('file').click();
 $('file').onchange = async e => {
   const f = e.target.files[0]; if(!f) return;
   try{
+    if(/\.(svg|png|jpe?g)$/i.test(f.name)){ await addImage(f); e.target.value = ''; return; }
     if(f.name.toLowerCase().endsWith('.stl')){
       const {pts3, w, d, h} = parseStl(await f.arrayBuffer());
       add('stl', {pts3, w, d, h, name: f.name.replace(/\.stl$/i, '')});
@@ -504,7 +511,7 @@ function freeSpot(o){
 
 function add(type, extra={}){
   const NAMES = {box:'Короб', cyl:'Цилиндр', poly:'Призма', sketch:'Эскиз', thread:'Резьба',
-                 sphere:'Шар', cone:'Конус', torus:'Кольцо', wedge:'Клин', text:'Текст'};
+                 sphere:'Шар', cone:'Конус', torus:'Кольцо', wedge:'Клин', text:'Текст', image:'Картинка'};
   const o = {id: nextId, name: NAMES[type] + ' ' + nextId,
     type, x:0, y:0, z:0, w:30, d:30, h:10, rot:0, rx:0, rz:0, sides:6, dia:10, pitch:1.5,
     color:BODY, shell:0, openTop:false, hole:false, vis:true, ...extra};
@@ -531,6 +538,36 @@ function setText(patch){
   push(); Object.assign(o, next, {w: +(o.d * t.aspect).toFixed(2)}); sync();
 }
 $('p-text').onchange = e => setText({text: e.target.value});
+// ---------- рельеф из картинки ----------
+// пропорцию узнаём только после растеризации: до неё w = d, потом выравниваем один раз
+setImageReady(() => {
+  for(const o of objects){
+    if(o.type !== 'image' || !o.fitAspect) continue;
+    const t = imageShapes(o.img, o.thr ?? 180, o.eps ?? .8);
+    if(t === null) continue;
+    if(t) o.w = +(o.d * t.aspect).toFixed(2);
+    delete o.fitAspect;
+  }
+  sync();
+});
+async function addImage(file){
+  try{
+    const img = await importImage(file);
+    add('image', {img, thr: 180, eps: .8, d: 20, h: 1.5, w: 20, fitAspect: true, name: file.name.replace(/\.[a-z]+$/i, '')});
+    say(`картинка ${file.name}: высота 20 мм, ширина по пропорции · включи «отверстие», чтобы вдавить`, 'ok');
+  }catch(err){ say('картинка не открылась: ' + err.message, 'err'); }
+}
+$('img-add').onclick = () => $('imgfile').click();
+$('imgfile').onchange = e => { const f = e.target.files[0]; if(f) addImage(f); e.target.value = ''; };
+const setImg = (k, v, lo, hi) => {
+  const o = sel(); if(!o || o.type !== 'image') return;
+  const x = evalExpr(v, paramValues(params).vals);
+  if(!Number.isFinite(x)) return say('не число: ' + v, 'err'), fillProps();
+  push(); o[k] = Math.min(hi, Math.max(lo, x)); sync();
+};
+$('p-thr').onchange = e => setImg('thr', e.target.value, 1, 254);
+$('p-eps').onchange = e => setImg('eps', e.target.value, .2, 3);
+['p-thr', 'p-eps'].forEach(id => $(id).onkeydown = e => { if(e.key === 'Enter') e.target.blur(); e.stopPropagation(); });
 $('p-text').onkeydown = e => { if(e.key === 'Enter') e.target.blur(); e.stopPropagation(); };
 $('p-font').onchange = e => setText({font: e.target.value});
 $('p-bold').onchange = e => setText({bold: e.target.checked});
@@ -607,7 +644,7 @@ function select(id){
   hudOff = false;
   selId = id;
   const s = sel();
-  if(s && s.vis && !showResult && !sketching && !cutting) gizmo.attach(meshOf(s.id)); else gizmo.detach();
+  if(s && s.vis && !showResult && !sketching && !cutting && !exT) gizmo.attach(meshOf(s.id)); else gizmo.detach();
   document.querySelectorAll('#list .obj').forEach(r => r.classList.toggle('sel', +r.dataset.id === selId));
   fillProps(); updateGhost(); if(s) say(s.name);
 }
@@ -680,6 +717,18 @@ function fillProps(){
   $('p-fit').value = o.fit || '';
   $('p-edge-row').style.display = (o.type === 'sketch' || o.type === 'box') && !o.hole ? '' : 'none';
   $('p-text-row').style.display = o.type === 'text' ? '' : 'none';
+  $('p-img-row').style.display = o.type === 'image' ? '' : 'none';
+  if(o.type === 'image'){
+    if(document.activeElement !== $('p-thr')) $('p-thr').value = o.thr ?? 180;
+    if(document.activeElement !== $('p-eps')) $('p-eps').value = o.eps ?? .8;
+    const t = o.img && imageShapes(o.img, o.thr ?? 180, o.eps ?? .8), k = t && dropSmall(t.shapes, o.w, o.d, 1);
+    $('p-img-info').textContent = !t ? 'картинка готовится…'
+      : !k.shapes.length ? 'при этом пороге не осталось ничего — подними порог'
+      : k.dropped ? `отброшено мелких деталей < 1 мм: ${k.dropped} — увеличь картинку или упрости рисунок` : '';
+  }
+  { const m = exMeta(o), f = (id, v) => { if(document.activeElement !== $(id)) $(id).value = v ?? ''; };
+    f('p-label', m.label); f('p-exorder', m.exOrder); f('p-exdist', m.exDist); $('p-exdir').value = m.exDir || 'up';
+    $('p-label').placeholder = unitName(o); }
   if(o.type === 'text'){
     if(document.activeElement !== $('p-text')) $('p-text').value = o.text || '';
     $('p-font').value = o.font || 'Arial'; $('p-bold').checked = o.bold !== false;
@@ -1085,6 +1134,7 @@ const CUT_TEXT = {
 function cutOff(){ cutting = false; cutGhost.visible = false; $('cut-tip').hidden = true; sync();
   $('cut').classList.remove('on'); $('boss').classList.remove('on'); $('conn').classList.remove('on'); $('cut-opts').hidden = true; $('stage').classList.remove('cutting'); }
 function cutStart(mode){
+  setExplode(0, false);
   if(cutting && cutMode === mode) return cutOff(), say(CUT_TEXT[mode].off);
   if(measuring) measureOff();
   cutMode = mode; cutting = true;
@@ -1207,6 +1257,128 @@ function renderConnList(o){
   box.querySelectorAll('[data-c]').forEach(b => b.onclick = () => {
     push(); connectors = connectors.filter(c => c.id !== b.dataset.c); sync(); say('коннектор удалён'); });
 }
+
+// ---------- вид в разборе ----------
+// единица разлёта — деталь (группа) или тело; её поля разбора живут в parts[grp] или в самом теле
+const unitKey = o => o.grp ? 'g:' + o.grp : 'b:' + o.id;
+const exMeta = o => o.grp ? (parts[o.grp] ||= {name: nextName('Деталь', Object.values(parts).map(p => p.name))}) : o;
+const unitName = o => o.grp ? partName(o, parts) : o.name;
+let exPlan = null, exUnitOf = null, exAnim = null;
+function buildExplode(){
+  const on = objects.filter(o => o.vis && (o.plate || 0) === printPlate());
+  const box = o => ({x0: o.x - o.w/2, x1: o.x + o.w/2, y0: o.y - o.d/2, y1: o.y + o.d/2, z0: o.z, z1: o.z + o.h});
+  const solids = on.filter(o => !o.hole || o.grp);
+  exUnitOf = new Map();
+  for(const o of on){
+    let key = unitKey(o);
+    // отверстие вне детали едет с телом, которое режет сильнее всего, — а не отдельным слоем
+    if(o.hole && !o.grp){
+      const a = box(o); let best = 0;
+      for(const t of solids){
+        // допуск — отверстие часто стоит вплотную к телу, которое режет, и объём пересечения нулевой
+        const b = box(t), ov = (lo, hi) => Math.max(0, Math.min(a[hi], b[hi]) - Math.max(a[lo], b[lo]) + .05);
+        const v = ov('x0', 'x1') * ov('y0', 'y1') * ov('z0', 'z1');
+        if(v > best){ best = v; key = unitKey(t); }
+      }
+    }
+    exUnitOf.set(o.id, key);
+  }
+  const units = new Map();
+  for(const o of on){
+    const k = exUnitOf.get(o.id); if(o.hole && k !== unitKey(o)) continue;
+    const u = units.get(k) || {key: k, min: Infinity, max: -Infinity, ids: [], o};
+    u.min = Math.min(u.min, o.z); u.max = Math.max(u.max, o.z + o.h); u.ids.push(o.id); units.set(k, u);
+  }
+  const list = [...units.values()].map(u => {
+    const m = exMeta(u.o), num = v => v === '' || v == null ? NaN : +v;
+    return {...u, order: num(m.exOrder), dir: m.exDir, dist: num(m.exDist)};
+  });
+  const gap = Math.max(0, evalExpr($('explode-gap').value, paramValues(params).vals) || 0);
+  exPlan = {plan: explodePlan(list, gap), units: list};
+}
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+function setExplode(t, animate = true){
+  t = Math.max(0, Math.min(1, t));
+  if(t > 0 && showResult) $('result').click();
+  if(animate && !reduceMotion.matches && Math.abs(t - exT) > .001){ exAnim = {from: exT, to: t, t0: performance.now()}; return; }
+  exAnim = null; exT = t; $('explode-t').value = Math.round(t * 100);
+  if(!t){ $('explode-ov').querySelectorAll('.xl').forEach(e => e.remove()); $('explode-ov').firstElementChild.innerHTML = ''; }
+  applyExplode(); sync();
+}
+function stepExplode(){
+  if(!exAnim) return;
+  const k = Math.min(1, (performance.now() - exAnim.t0) / 900);
+  exT = exAnim.from + (exAnim.to - exAnim.from) * k; $('explode-t').value = Math.round(exT * 100);
+  applyExplode();
+  if(k >= 1){ const to = exAnim.to; exAnim = null; setExplode(to, false); }
+}
+function applyExplode(){
+  if(!exT && !exPlan) return;
+  if(!exPlan) buildExplode();
+  const e = ease(exT);
+  for(const o of objects){
+    const m = meshOf(o.id); if(!m) continue;
+    m.position.set(o.x + (o.plate ? PLATE_GAP : 0), o.z + o.h/2, o.y);
+    const p = exPlan.plan[exUnitOf.get(o.id)]; if(!p || !e) continue;
+    if(p.dir === 'side') m.position.x += p.off * e; else m.position.y += p.off * e;
+  }
+  if(!exT) exPlan = null;
+}
+// выноски: подпись слева или справа от слоя, чередуясь, линия к центру детали
+function drawExplodeLabels(){
+  const ov = $('explode-ov'), svg = ov.firstElementChild;
+  if(exT < .5 || !exPlan) return;
+  const W = ov.clientWidth, H = ov.clientHeight, op = Math.min(1, (exT - .5) * 2), rows = [];
+  for(const u of exPlan.units){
+    const m = exMeta(u.o), text = m.label || (u.o.grp ? unitName(u.o) : '');
+    if(!text) continue;
+    const b = new THREE.Box3();
+    for(const id of u.ids){ const mesh = meshOf(id); if(mesh){ mesh.updateMatrixWorld(); b.expandByObject(mesh); } }
+    if(b.isEmpty()) continue;
+    const c = b.getCenter(new THREE.Vector3()).project(cam);
+    if(c.z > 1) continue;
+    rows.push({text, x: (c.x*.5 + .5) * W, y: (-c.y*.5 + .5) * H, left: exPlan.plan[u.key].layer % 2 === 0});
+  }
+  for(const side of [true, false]){
+    const r = rows.filter(q => q.left === side).sort((a, b) => a.y - b.y);
+    for(let i = 1; i < r.length; i++) r[i].ly = Math.max(r[i].y, (r[i-1].ly ?? r[i-1].y) + 24);
+    r.forEach(q => q.ly ??= q.y);
+  }
+  const els = [...ov.querySelectorAll('.xl')];
+  while(els.length < rows.length){ const d = document.createElement('div'); d.className = 'xl'; ov.appendChild(d); els.push(d); }
+  els.slice(rows.length).forEach(e => e.remove());
+  let lines = '';
+  rows.forEach((q, i) => {
+    const el = els[i]; el.textContent = q.text; el.style.opacity = op;
+    const lx = Math.max(4, Math.min(W - el.offsetWidth - 4, q.left ? 70 : W - 70 - el.offsetWidth));
+    el.style.left = lx + 'px'; el.style.top = q.ly + 'px';
+    const ax = q.left ? lx + el.offsetWidth : lx;
+    lines += `<line x1="${ax}" y1="${q.ly}" x2="${q.x}" y2="${q.y}" opacity="${op * .55}"/><circle cx="${q.x}" cy="${q.y}" r="2.5" opacity="${op}"/>`;
+  });
+  svg.innerHTML = lines;
+}
+$('explode').onclick = () => {
+  const open = $('explode-bar').hidden;
+  $('explode-bar').hidden = !open; $('explode').classList.toggle('on', open);
+  setExplode(open ? 1 : 0);
+};
+$('explode-t').oninput = e => setExplode(e.target.value / 100, false);
+$('explode-play').onclick = () => setExplode(exT > .5 ? 0 : 1);
+$('explode-gap').onchange = () => { exPlan = null; applyExplode(); };
+$('explode-gap').onkeydown = e => { if(e.key === 'Enter') e.target.blur(); e.stopPropagation(); };
+function setExMeta(k, v){
+  const o = sel(); if(!o) return;
+  const m = exMeta(o), val = k === 'label' || k === 'exDir' ? String(v).trim() : (String(v).trim() === '' ? '' : evalExpr(v, paramValues(params).vals));
+  if(k !== 'label' && k !== 'exDir' && val !== '' && !Number.isFinite(val)) return say('не число: ' + v, 'err'), fillProps();
+  push();
+  if(val === '' || (k === 'exDir' && val === 'up')) delete m[k]; else m[k] = val;
+  sync(); applyExplode();
+}
+[['p-label', 'label'], ['p-exorder', 'exOrder'], ['p-exdist', 'exDist']].forEach(([id, k]) => {
+  $(id).onchange = e => setExMeta(k, e.target.value);
+  $(id).onkeydown = e => { if(e.key === 'Enter') e.target.blur(); e.stopPropagation(); };
+});
+$('p-exdir').onchange = e => setExMeta('exDir', e.target.value);
 
 function cutClick(){
   const r = cutPlan();
@@ -1445,6 +1617,7 @@ function neededMaterial(){
   return m.join('+');
 }
 function runPreflight(){
+  setExplode(0, false);
   clearOverhang();
   const on = objects.filter(o => (o.plate || 0) === printPlate() && o.vis);
   const bodies = on.map(o => {
@@ -2103,7 +2276,7 @@ function drawLabels(){
   // мини-панель висит над выбранной фигурой, чтобы не бегать в угол сцены
   const hud = $('hud'), selHud = sel(), mHud = selHud && meshOf(selHud.id);
   // прячем на время перетаскивания: панель прыгала бы за фигурой и мешала целиться
-  if(mHud && mHud.visible && !sketching && !cutting && !gizmo.dragging && !hudOff){
+  if(mHud && mHud.visible && !sketching && !cutting && !exT && !gizmo.dragging && !hudOff){
     mHud.updateMatrixWorld();
     const b = new THREE.Box3().setFromObject(mHud), c = new THREE.Vector3();
     b.getCenter(c);
@@ -2269,7 +2442,7 @@ function loop(){
   if(view.width !== Math.round(w*dpr) || view.height !== Math.round(h*dpr)){
     renderer.setSize(w, h, false); cam.aspect = w/h; cam.updateProjectionMatrix(); }
   requestAnimationFrame(loop);
-  stepFly(); stepPulse(); orbit.update(); updateGridLOD(); saveCam(); renderer.render(scene, cam);
+  stepFly(); stepPulse(); stepExplode(); orbit.update(); updateGridLOD(); saveCam(); renderer.render(scene, cam); drawExplodeLabels();
   try{ drawLabels(); drawRulers(); }catch(e){ window.__lastErr = e.message + ' @ ' + (e.stack||'').split('\n')[1]; }
 }
 // всё состояние приезжает из базы одним запросом
@@ -2328,6 +2501,8 @@ try{
   }).observe({entryTypes: ['longtask']});
 }catch(e){}
 
-window.__dbg = () => ({objects, selId, parts, connectors, arrows: connGroup.children.map(a => a.position.toArray().map(v => +v.toFixed(1))), долгиеЗадачи: window.__long.slice(-5), hist: hist.length, redo: redoStack.length, meshes: raw.children.length,
+// в скрытой вкладке requestAnimationFrame стоит — кадр разбора и выносок можно прогнать руками
+window.__tick = () => { stepExplode(); drawExplodeLabels(); };
+window.__dbg = () => ({objects, selId, parts, connectors, explode: exPlan && exPlan.units.map(u => [u.o.name, exPlan.plan[u.key].layer, +exPlan.plan[u.key].off.toFixed(1), u.ids.length]), arrows: connGroup.children.map(a => a.position.toArray().map(v => +v.toFixed(1))), долгиеЗадачи: window.__long.slice(-5), hist: hist.length, redo: redoStack.length, meshes: raw.children.length,
   result: !!resultMesh, plate: printPlate(),
   ghost: ghostDepth && {depth:+ghostDepth.size.y.toFixed(2), top:+ghostDepth.top.toFixed(2)}, cam: [+cam.position.x.toFixed(1), +orbit.target.x.toFixed(1)]});

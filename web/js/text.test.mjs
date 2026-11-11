@@ -11,7 +11,8 @@ import { traceMask, groupLoops, maskToShapes, area } from './textshape.js';
 const here = fileURLToPath(new URL('.', import.meta.url));
 const three = here + '../vendor/three@0.175.0/build/three.module.js';
 const src = readFileSync(here + 'geometry.js', 'utf8').replace("from 'three'", `from '${three}'`)
-  .replace("from './textshape.js'", `from '${here}textshape.js'`);
+  .replace("from './textshape.js'", `from '${here}textshape.js'`)
+  .replace("from './imageshape.js'", `from '${here}imageshape.js'`);
 const tmp = join(mkdtempSync(join(tmpdir(), 'text-')), 'geometry.mjs');
 writeFileSync(tmp, src);
 const { textGeo } = await import(tmp);

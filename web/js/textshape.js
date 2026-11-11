@@ -136,3 +136,21 @@ export function textShapes(text, family = 'Arial', bold = true){
   cache.set(k, r);
   return r;
 }
+
+// Мелочь меньше minMm (по меньшей стороне габарита контура) не напечатать соплом 0.4:
+// внешний контур выкидываем целиком, мелкую дырку — заливаем. w, d — размер тела в мм
+export function dropSmall(shapes, w, d, minMm = 1){
+  const size = l => {
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for(const [x, y] of l){ x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    return Math.min((x1 - x0) * w, (y1 - y0) * d);
+  };
+  let dropped = 0;
+  const kept = [];
+  for(const s of shapes){
+    if(size(s.outer) < minMm){ dropped++; continue; }
+    const holes = s.holes.filter(h => size(h) >= minMm || (dropped++, false));
+    kept.push({outer: s.outer, holes});
+  }
+  return {shapes: kept, dropped};
+}
