@@ -260,6 +260,19 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
     border:1px solid var(--line); border-radius:6px; }
   #p-conns .conn .on { color:var(--dim); font-size:11px; }
   #p-conns .conn button { padding:0 5px; border-color:transparent; background:transparent; color:var(--dim); }
+  #explode-bar { position:absolute; left:50%; transform:translateX(-50%); bottom:56px; z-index:3; display:flex; gap:6px;
+    align-items:center; padding:6px 8px; background:var(--glass); border:1px solid var(--hair); border-radius:10px;
+    box-shadow:0 6px 22px var(--shadow); backdrop-filter:blur(8px); }
+  #explode-bar[hidden] { display:none; }
+  #explode-t { width:180px; }
+  #explode-bar label.f input { width:38px; }
+  #explode-ov { position:absolute; inset:0; pointer-events:none; overflow:hidden; z-index:2; }
+  #explode-ov svg { position:absolute; inset:0; width:100%; height:100%; }
+  #explode-ov svg line { stroke:var(--ink); stroke-width:1; opacity:.55; }
+  #explode-ov svg circle { fill:var(--ink); }
+  #explode-ov .xl { position:absolute; transform:translateY(-50%); padding:2px 8px; border-radius:6px; font-size:12px;
+    white-space:nowrap; background:var(--panel); color:var(--ink); border:1px solid var(--line); }
+  #explode.on { background:var(--sel); border-color:var(--accent); color:var(--accent); }
   input.fx { font-family: ui-monospace, monospace; color:var(--fx); }
 </style>
 
@@ -432,11 +445,18 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
       </div>
       <div class="hint" id="cut-hint">Кликни по грани — вырез встанет поперёк неё. Esc — выйти.</div>
     </div>
+    <div id="explode-bar" hidden>
+      <button class="sm" id="explode-play" title="проиграть разбор и сборку">▶</button>
+      <input id="explode-t" type="range" min="0" max="100" value="0" aria-label="степень разбора">
+      <label class="f">зазор, мм <input id="explode-gap" type="text" inputmode="decimal" value="8"></label>
+    </div>
+    <div id="explode-ov"><svg></svg></div>
     <div class="views">
       <button class="icon" data-view="iso" title="1">3D</button>
       <button class="icon" data-view="top" title="2">Сверху</button>
       <button class="icon" data-view="front" title="3">Спереди</button>
       <button class="icon" data-view="side" title="4">Сбоку</button>
+      <button class="icon" id="explode" title="Вид в разборе: детали расходятся слоями, печать не меняется">Разобрать</button>
     </div>
     <div class="cap" id="dims"></div>
   </div>
@@ -594,6 +614,16 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
             скругление рёбер, мм <input id="p-edge" type="text" inputmode="decimal" value="0"></label>
         </div>
         <div class="hint" id="grp-status" style="margin:2px 0 0"></div>
+        <div id="p-ex" class="stack" style="gap:4px;margin-top:6px">
+          <label class="f wide">подпись в разборе <input id="p-label" type="text" spellcheck="false" placeholder="как в списке"></label>
+          <div class="pair">
+            <select id="p-exdir" aria-label="направление в разборе">
+              <option value="up">вверх</option><option value="down">вниз</option><option value="side">в сторону</option>
+            </select>
+            <label class="f">порядок <input id="p-exorder" type="text" inputmode="decimal" placeholder="авто"></label>
+          </div>
+          <label class="f">расстояние, мм <input id="p-exdist" type="text" inputmode="decimal" placeholder="авто"></label>
+        </div>
         <div id="p-conns-row"><span class="hint">коннекторы:</span> <span id="p-conns"></span></div>
         <div class="acts">
           <button class="sm" id="center" title="совместить с центром детали">Центрировать</button>
