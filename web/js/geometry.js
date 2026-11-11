@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { textShapes } from './textshape.js';
 
 // Винтовая поверхность: радиус зависит от z и угла, торцы закрыты — сетка водонепроницаемая.
 export function threadGeo(o){
@@ -107,6 +108,37 @@ export function filletPrismGeo(pts, rp, rh, seg = 6){
   return g;
 }
 
+// Надпись: фигуры {outer, holes} в единичных координатах (как у эскиза), выдавленные на
+// высоту 1. Крышки — триангуляция с дырками, ориентация треугольников выставляется по знаку
+// площади: earcut её не гарантирует. Стенки идут по всем контурам; материал у контуров слева,
+// поэтому одна формула даёт наружные стенки и у внешнего контура, и у дырок.
+export function textGeo(shapes){
+  const pos = [], P = (q, y) => pos.push(q[0], y, -q[1]);
+  const v2 = l => l.map(p => new THREE.Vector2(p[0], p[1]));
+  for(const s of shapes){
+    const outer = v2(s.outer), holes = s.holes.map(v2);
+    const all = outer.concat(...holes);
+    const faces = THREE.ShapeUtils.triangulateShape(outer, holes);
+    for(let [a, b, c] of faces){
+      const A = all[a], B = all[b], C = all[c];
+      if((B.x - A.x) * (C.y - A.y) - (B.y - A.y) * (C.x - A.x) < 0) [b, c] = [c, b];
+      P([all[a].x, all[a].y], .5); P([all[b].x, all[b].y], .5); P([all[c].x, all[c].y], .5);
+      P([all[c].x, all[c].y], -.5); P([all[b].x, all[b].y], -.5); P([all[a].x, all[a].y], -.5);
+    }
+    for(const l of [s.outer, ...s.holes]){
+      for(let i = 0; i < l.length; i++){
+        const p = l[i], q = l[(i + 1) % l.length];
+        P(p, -.5); P(q, -.5); P(q, .5);
+        P(p, -.5); P(q, .5); P(p, .5);
+      }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
 export function wedgeGeo(){
   // клин: прямоугольное основание, скат от задней стенки к передней кромке
   const p = [[-.5,-.5,-.5],[.5,-.5,-.5],[.5,-.5,.5],[-.5,-.5,.5],[-.5,.5,-.5],[.5,.5,-.5]];
@@ -150,6 +182,10 @@ export function hingeShift(o, next){
 
 export function unitGeo(o){
   if(o.type === 'stl') return stlUnitGeo(o.pts3);
+  if(o.type === 'text'){
+    const t = textShapes(o.text || 'Текст', o.font || 'Arial', o.bold !== false);
+    return t ? textGeo(t.shapes) : new THREE.BoxGeometry(1, 1, 1);
+  }
   if(o.type === 'thread') return threadGeo(o);
   if(o.type === 'box') return new THREE.BoxGeometry(1,1,1);
   if(o.type === 'sphere') return new THREE.SphereGeometry(.5, 40, 24);

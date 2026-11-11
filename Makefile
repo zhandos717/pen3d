@@ -19,13 +19,13 @@ $(STAMP): requirements.txt
 	$(PIP) install -q -r requirements.txt
 	@touch $@
 
-run: venv        ## запустить редактор на http://127.0.0.1:8765
-	$(PY) bridge.py
+run: venv        ## запустить редактор на http://127.0.0.1:8765 (другой порт: make run PORT=8770)
+	$(PY) bridge.py $(if $(PORT),--port $(PORT))
 
 lan: venv        ## то же, но слушать всю локальную сеть (без авторизации!)
-	$(PY) bridge.py --lan
+	$(PY) bridge.py --lan $(if $(PORT),--port $(PORT))
 
-check: check-db check-slicer check-i18n check-hinge check-params check-templates check-preflight check-fillet check-material check-parts  ## прогнать все проверки
+check: check-db check-slicer check-i18n check-hinge check-params check-templates check-preflight check-fillet check-material check-parts check-text  ## прогнать все проверки
 
 check-db: venv   ## база: запись, чтение, удаление на временном файле
 	$(PY) db.py
@@ -48,6 +48,9 @@ check-material: venv  ## печать под нужный пластик: дет
 
 check-parts:      ## детали и коннекторы: список по деталям, имена, осиротевшие коннекторы
 	node web/js/parts.test.mjs
+
+check-text:       ## надпись: обводка букв в контуры с дырками, сетка замкнута
+	node web/js/text.test.mjs
 
 check-fillet:     ## скругление рёбер: сетка замкнута, объём срезан ровно на четверти
 	node web/js/fillet.test.mjs
