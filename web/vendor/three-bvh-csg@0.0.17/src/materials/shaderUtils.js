@@ -1,4 +1,4 @@
-import { Color } from 'three';
+import { Color } from '/vendor/three@0.175.0/build/three.module.js';
 
 function addWorldPosition( shader ) {
 

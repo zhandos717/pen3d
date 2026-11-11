@@ -1,4 +1,4 @@
-import { Box3, Vector3 } from 'three';
+import { Box3, Vector3 } from '/vendor/three@0.175.0/build/three.module.js';
 import { TRAVERSAL_COST, TRIANGLE_INTERSECT_COST } from '../core/Constants.js';
 import { arrayToBox } from '../utils/ArrayBoxUtilities.js';
 import { isSharedArrayBufferSupported } from '../utils/BufferUtils.js';

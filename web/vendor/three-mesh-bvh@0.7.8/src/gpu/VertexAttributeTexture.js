@@ -17,7 +17,7 @@ import {
 	RGBAIntegerFormat,
 
 	NearestFilter,
-} from 'three';
+} from '/vendor/three@0.175.0/build/three.module.js';
 
 function countToStringFormat( count ) {
 

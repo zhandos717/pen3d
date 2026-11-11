@@ -1,4 +1,4 @@
-import { InstancedMesh, SphereGeometry, MeshBasicMaterial, Matrix4 } from 'three';
+import { InstancedMesh, SphereGeometry, MeshBasicMaterial, Matrix4 } from '/vendor/three@0.175.0/build/three.module.js';
 
 const _matrix = new Matrix4();
 export class PointsHelper extends InstancedMesh {

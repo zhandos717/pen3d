@@ -1,7 +1,7 @@
-import { Ray, Matrix4, Mesh, Vector3, Sphere, REVISION } from 'three';
+import { Ray, Matrix4, Mesh, Vector3, Sphere, REVISION } from '/vendor/three@0.175.0/build/three.module.js';
 import { convertRaycastIntersect } from './GeometryRayIntersectUtilities.js';
 import { MeshBVH } from '../core/MeshBVH.js';
-import * as THREE from 'three';
+import * as THREE from '/vendor/three@0.175.0/build/three.module.js';
 
 const BatchedMesh = THREE.BatchedMesh || null; // this is necessary to not break three.js r157-
 const IS_REVISION_166 = parseInt( REVISION ) >= 166;

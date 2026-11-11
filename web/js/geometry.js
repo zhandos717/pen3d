@@ -221,39 +221,6 @@ export function unitGeoChunks(o, n = 8){
   return out;
 }
 
-// Как EdgesGeometry, но без рёбер с одним соседом. После CSG на плоской грани полно
-// Т-стыков: такие рёбра EdgesGeometry считает границей и рисует всю триангуляцию.
-export function featureEdges(geo, angle = 25){
-  const pos = geo.attributes.position, idx = geo.index, cos = Math.cos(angle * Math.PI / 180);
-  const n = idx ? idx.count : pos.count, at = i => idx ? idx.getX(i) : i;
-  const q = v => Math.round(v * 1e4);
-  const key = i => `${q(pos.getX(i))},${q(pos.getY(i))},${q(pos.getZ(i))}`;
-  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
-  const edges = new Map(), out = [];
-  for(let f = 0; f < n; f += 3){
-    const v = [at(f), at(f + 1), at(f + 2)];
-    a.fromBufferAttribute(pos, v[0]); b.fromBufferAttribute(pos, v[1]); c.fromBufferAttribute(pos, v[2]);
-    const nr = new THREE.Vector3().subVectors(c, b).cross(new THREE.Vector3().subVectors(a, b));
-    if(nr.lengthSq() < 1e-20) continue;
-    nr.normalize();
-    const k = v.map(key);
-    for(let j = 0; j < 3; j++){
-      const k0 = k[j], k1 = k[(j + 1) % 3];
-      if(k0 === k1) continue;
-      const h = k0 < k1 ? k0 + '|' + k1 : k1 + '|' + k0;
-      const e = edges.get(h);
-      if(!e){ edges.set(h, {i: v[j], j: v[(j + 1) % 3], n: nr}); continue; }
-      if(e.n && e.n.dot(nr) <= cos){
-        out.push(pos.getX(e.i), pos.getY(e.i), pos.getZ(e.i), pos.getX(e.j), pos.getY(e.j), pos.getZ(e.j));
-      }
-      e.n = null;
-    }
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(out, 3));
-  return g;
-}
-
 export function unitGeo(o){
   if(o.type === 'stl') return stlUnitGeo(o.pts3);
   if(o.type === 'image' || o.type === 'text'){

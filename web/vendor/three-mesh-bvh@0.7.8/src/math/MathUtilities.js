@@ -1,4 +1,4 @@
-import { Vector3, Vector2, Plane, Line3 } from 'three';
+import { Vector3, Vector2, Plane, Line3 } from '/vendor/three@0.175.0/build/three.module.js';
 
 export const closestPointLineToLine = ( function () {
 

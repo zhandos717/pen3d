@@ -1,4 +1,4 @@
-import { Group, Mesh, LineSegments, LineBasicMaterial, MeshPhongMaterial, BufferGeometry, BufferAttribute } from 'three';
+import { Group, Mesh, LineSegments, LineBasicMaterial, MeshPhongMaterial, BufferGeometry, BufferAttribute } from '/vendor/three@0.175.0/build/three.module.js';
 
 export class TriangleSetHelper extends Group {
 

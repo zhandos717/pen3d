@@ -1,4 +1,4 @@
-import { Box3, Matrix4 } from 'three';
+import { Box3, Matrix4 } from '/vendor/three@0.175.0/build/three.module.js';
 import { BufferStack } from '../utils/BufferStack.js';
 import { BOUNDING_DATA_INDEX, COUNT, IS_LEAF, LEFT_NODE, OFFSET, RIGHT_NODE } from '../utils/nodeBufferUtils.js';
 import { arrayToBox } from '../../utils/ArrayBoxUtilities.js';

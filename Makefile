@@ -25,7 +25,7 @@ run: venv        ## запустить редактор на http://127.0.0.1:87
 lan: venv        ## то же, но слушать всю локальную сеть (без авторизации!)
 	$(PY) bridge.py --lan $(if $(PORT),--port $(PORT))
 
-check: check-syntax check-db check-slicer check-i18n check-hinge check-params check-templates check-preflight check-fillet check-material check-parts check-text check-explode check-image check-hollow check-components check-preview  ## прогнать все проверки
+check: check-syntax check-db check-slicer check-i18n check-hinge check-params check-templates check-preflight check-fillet check-material check-parts check-text check-explode check-image check-hollow check-components check-preview check-edges  ## прогнать все проверки
 
 check-db: venv   ## база: запись, чтение, удаление на временном файле
 	$(PY) db.py
@@ -51,6 +51,9 @@ check-parts:      ## детали и коннекторы: список по д�
 
 check-syntax:    ## синтаксис всех модулей: повторное объявление имени ломает страницу целиком
 	@for f in web/js/*.js; do node --input-type=module --check < $$f || { echo "  в $$f"; exit 1; }; done; echo "syntax: ok"
+
+check-edges:     ## рёбра детали: углы куба рисуются, Т-стык на плоской грани — нет
+	node web/js/edges.test.mjs
 
 check-preview:   ## превью: уровни светов, приоритет кнопки над сценарием, роли и сценарии в файле
 	node web/js/preview.test.mjs
@@ -89,7 +92,14 @@ vendor:          ## перекачать библиотеки в web/vendor по
 		mkdir -p "$$(dirname "$$p")"; \
 		curl -sfL "https://cdn.jsdelivr.net/npm/$$p" -o "$$p" || echo "не скачался: $$p"; \
 	done < .sources
+	@$(MAKE) -s vendor-paths
 	@echo "файлов в vendor: $$(find web/vendor -name '*.js' | wc -l | tr -d ' ')"
+
+vendor-paths:    ## голые импорты 'three' в CSG-библиотеках → прямые пути: в воркере нет importmap
+	@grep -rlE "from '(three|three-mesh-bvh)'" web/vendor/three-bvh-csg@* web/vendor/three-mesh-bvh@* | while read -r f; do \
+		sed -i.bak -e "s#from 'three'#from '/vendor/three@0.175.0/build/three.module.js'#" \
+		            -e "s#from 'three-mesh-bvh'#from '/vendor/three-mesh-bvh@0.7.8/src/index.js'#" "$$f" && rm "$$f.bak"; \
+	done
 
 build-web:       ## пересобрать Solid-куски (web/solid/*) в web/js/*-solid.js — нужен Node, только для разработки
 	@cd web && npm install --silent && npm run build

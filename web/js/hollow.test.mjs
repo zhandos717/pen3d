@@ -11,6 +11,7 @@ const three = here + '../vendor/three@0.175.0/build/three.module.js';
 const fix = src => src.replace("from 'three'", `from '${three}'`)
   .replace("from './textshape.js'", `from '${here}textshape.js'`).replace("from './imageshape.js'", `from '${here}imageshape.js'`)
   .replace("from './geometry.js'", `from '${join(dir, 'geometry.mjs')}'`)
+  .replace("from './csg-run.js'", `from '${here}csg-run.js'`)
   .replace("from 'three-bvh-csg'", `from '${here}../vendor/three-bvh-csg@0.0.17/src/index.js'`);
 writeFileSync(join(dir, 'geometry.mjs'), fix(readFileSync(here + 'geometry.js', 'utf8')));
 // csg.js без three-bvh-csg: план вырезов от него не зависит, а вендорный пакет тянет 'three' по имени

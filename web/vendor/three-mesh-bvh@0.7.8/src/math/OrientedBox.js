@@ -1,4 +1,4 @@
-import { Vector3, Matrix4, Line3 } from 'three';
+import { Vector3, Matrix4, Line3 } from '/vendor/three@0.175.0/build/three.module.js';
 import { SeparatingAxisBounds } from './SeparatingAxisBounds.js';
 import { ExtendedTriangle } from './ExtendedTriangle.js';
 import { closestPointsSegmentToSegment } from './MathUtilities.js';

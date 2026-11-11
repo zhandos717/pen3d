@@ -6,7 +6,7 @@ import {
 	RGIntegerFormat,
 	NearestFilter,
 	BufferAttribute,
-} from 'three';
+} from '/vendor/three@0.175.0/build/three.module.js';
 import {
 	FloatVertexAttributeTexture,
 	UIntVertexAttributeTexture,
