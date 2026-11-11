@@ -11,6 +11,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { parseStl } from './stl-import.js';
 import { buildResult, partSteps, runPart, meshOfResult, cutPlan as partPlan, innerOf, holeGhost } from './csg.js';
 import { meshToStlAsync } from './stl.js';
+import { packShelves } from './layout.js';
 import { PROMPT, PROVIDERS, sanitize } from './ai.js';
 import { gearSketch, roundedRect } from './gear.js';
 import { t } from './i18n.js';
@@ -577,16 +578,16 @@ function download(blob, name){
 
 // Диалог "Сохранить как" выбираем один раз, дальше пишем в тот же файл молча —
 // экономит навигацию по папкам при повторном экспорте STL в слайсер.
-let stlFileHandle = null;
+const stlFiles = new Map();                 // имя → файл: раскладка не должна писать поверх обычной выгрузки
 async function saveStl(bytes, name){
   if(!window.showSaveFilePicker) return download(new Blob([bytes], {type:'model/stl'}), name);
   try{
-    if(!stlFileHandle) stlFileHandle = await window.showSaveFilePicker(
-      {suggestedName: name, types: [{description: 'STL', accept: {'model/stl': ['.stl']}}]});
-    const w = await stlFileHandle.createWritable();
+    if(!stlFiles.has(name)) stlFiles.set(name, await window.showSaveFilePicker(
+      {suggestedName: name, types: [{description: 'STL', accept: {'model/stl': ['.stl']}}]}));
+    const w = await stlFiles.get(name).createWritable();
     await w.write(bytes); await w.close();
   }catch(e){
-    stlFileHandle = null;
+    stlFiles.delete(name);
     if(e.name !== 'AbortError') download(new Blob([bytes], {type:'model/stl'}), name);
   }
 }
@@ -1974,6 +1975,72 @@ $('stl').onclick = async e => {
   await saveStl(out, 'usta.stl');
   say('STL сохранён', 'ok');
 };
+// Детали сборки по отдельности, разложенные по столу, одним STL: корпус и крышка стоят
+// в сцене друг на друге и при обычной выгрузке срастаются в закрытую коробку.
+// Детали не касаются друг друга — Bambu Studio делит файл на объекты сам.
+function cutOffThread(steps){
+  return new Promise((resolve, reject) => {
+    const local = () => { try{ resolve(runPart(steps)); }catch(err){ reject(err); } };
+    let w;
+    try{ w = new Worker(new URL('./csg-worker.js', import.meta.url), {type: 'module'}); }catch(e){ return local(); }
+    w.onmessage = e => { w.terminate(); e.data.error ? reject(new Error(e.data.error)) : resolve(e.data); };
+    w.onerror = e => { e.preventDefault?.(); w.terminate(); local(); };
+    w.postMessage({id: 0, steps});
+  });
+}
+function flatPositions(r){
+  if(!r.idx) return r.pos;
+  const out = new Float32Array(r.idx.length * 3);
+  for(let i = 0; i < r.idx.length; i++) out.set(r.pos.subarray(3 * r.idx[i], 3 * r.idx[i] + 3), 3 * i);
+  return out;
+}
+async function plateLayout(){
+  const on = objects.filter(o => (o.plate || 0) === printPlate() && o.vis && !o.ref);
+  const plan = partPlan(on.map(geoOf)), place = (o, b) => objToMesh({...o, plate: 0}, b), units = [];
+  for(const g of plan.groups){
+    const list = on.filter(o => o.grp === g.grp);
+    const steps = partSteps({...g, holes: g.holes.concat(globalHolesFor(list).map(geoOf))}, place);
+    if(steps) units.push({name: parts[g.grp]?.name || g.grp, steps});
+  }
+  const steps = partSteps(plan.loose, place);
+  if(steps) units.push({name: t('тела без детали'), steps});
+  if(!units.length){ say(t('нечего печатать'), 'err'); return null; }
+  for(const u of units){
+    u.pos = flatPositions(await cutOffThread(u.steps));
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, z0 = Infinity, z1 = -Infinity;
+    for(let i = 0; i < u.pos.length; i += 3){
+      const x = u.pos[i], y = u.pos[i + 1], z = u.pos[i + 2];
+      if(x < x0) x0 = x; if(x > x1) x1 = x; if(y < y0) y0 = y; if(z < z0) z0 = z; if(z > z1) z1 = z;
+    }
+    Object.assign(u, {w: x1 - x0, d: z1 - z0, cx: (x0 + x1) / 2, cz: (z0 + z1) / 2, y0});
+  }
+  const at = packShelves(units, BED);
+  if(!at){
+    say(t('детали не влезают на один стол: ') + units.map(u => `${u.name} ${u.w.toFixed(0)}×${u.d.toFixed(0)}`).join(', '), 'err');
+    return null;
+  }
+  const all = new Float32Array(units.reduce((n, u) => n + u.pos.length, 0));
+  let k = 0;
+  units.forEach((u, i) => {
+    const dx = at[i].x - u.cx, dz = at[i].y - u.cz;
+    for(let j = 0; j < u.pos.length; j += 3){ all[k++] = u.pos[j] + dx; all[k++] = u.pos[j + 1] - u.y0; all[k++] = u.pos[j + 2] + dz; }
+  });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(all, 3));
+  return {mesh: new THREE.Mesh(g), names: units.map(u => u.name)};
+}
+$('stl-layout').onclick = async e => {
+  const done = busy(e.currentTarget, t('раскладываю…'));
+  try{
+    const r = await plateLayout();
+    if(r){
+      await saveStl(await meshToStlAsync(r.mesh), 'usta-plate.stl');
+      r.mesh.geometry.dispose();
+      say(t('на столе: ') + r.names.join(', '), 'ok');
+    }
+  }catch(err){ say(t('не удалось собрать: ') + err.message, 'err'); }
+  done();
+};
 // ---------- проверка перед печатью ----------
 // габариты — по мешам сцены (с поворотом и зазором посадки), нависания — по собранной детали
 const overhangMat = new THREE.MeshBasicMaterial({color: 0xff8a3d, transparent: true, opacity: .75,
@@ -2878,6 +2945,6 @@ try{
 
 // в скрытой вкладке requestAnimationFrame стоит — кадр разбора и выносок можно прогнать руками
 window.__tick = () => { stepExplode(); stepPreview(); drawExplodeLabels(); drawLabels(); };
-window.__dbg = () => ({cutLog, cutRestarts,screenOf: id => { const m = meshOf(id); m.updateMatrixWorld(); const p = new THREE.Box3().setFromObject(m).getCenter(new THREE.Vector3()).project(cam), r = view.getBoundingClientRect(); return [r.left + (p.x*.5 + .5) * r.width, r.top + (-p.y*.5 + .5) * r.height]; }, objects, selId, parts, connectors, scenarios, preview: {on: previewOn, held: [...held], press: [...pressOff].map(([k, v]) => [k, +v.length().toFixed(2)]), lights: [...lightMats].map(([k, m]) => [k, +m.emissiveIntensity.toFixed(2), '#' + m.emissive.getHexString()]), halos: [...halos].filter(([, h]) => h.visible).map(([k]) => k), env: !!scene.environment, shadows: renderer.shadowMap.enabled}, cuts: [...partCuts].map(([g, c]) => [g, c.mesh.geometry.attributes.position.count / 3, c.mesh.visible]), cutMesh: g => partCuts.get(g)?.mesh, explode: exPlan && exPlan.units.map(u => [u.o.name, exPlan.plan[u.key].layer, +exPlan.plan[u.key].off.toFixed(1), u.ids.length]), arrows: connGroup.children.map(a => a.position.toArray().map(v => +v.toFixed(1))), долгиеЗадачи: window.__long.slice(-5), hist: hist.length, redo: redoStack.length, meshes: raw.children.length,
+window.__dbg = () => ({cutLog, cutRestarts, plateLayout,screenOf: id => { const m = meshOf(id); m.updateMatrixWorld(); const p = new THREE.Box3().setFromObject(m).getCenter(new THREE.Vector3()).project(cam), r = view.getBoundingClientRect(); return [r.left + (p.x*.5 + .5) * r.width, r.top + (-p.y*.5 + .5) * r.height]; }, objects, selId, parts, connectors, scenarios, preview: {on: previewOn, held: [...held], press: [...pressOff].map(([k, v]) => [k, +v.length().toFixed(2)]), lights: [...lightMats].map(([k, m]) => [k, +m.emissiveIntensity.toFixed(2), '#' + m.emissive.getHexString()]), halos: [...halos].filter(([, h]) => h.visible).map(([k]) => k), env: !!scene.environment, shadows: renderer.shadowMap.enabled}, cuts: [...partCuts].map(([g, c]) => [g, c.mesh.geometry.attributes.position.count / 3, c.mesh.visible]), cutMesh: g => partCuts.get(g)?.mesh, explode: exPlan && exPlan.units.map(u => [u.o.name, exPlan.plan[u.key].layer, +exPlan.plan[u.key].off.toFixed(1), u.ids.length]), arrows: connGroup.children.map(a => a.position.toArray().map(v => +v.toFixed(1))), долгиеЗадачи: window.__long.slice(-5), hist: hist.length, redo: redoStack.length, meshes: raw.children.length,
   result: !!resultMesh, plate: printPlate(),
   ghost: ghostDepth && {depth:+ghostDepth.size.y.toFixed(2), top:+ghostDepth.top.toFixed(2)}, cam: [+cam.position.x.toFixed(1), +orbit.target.x.toFixed(1)]});

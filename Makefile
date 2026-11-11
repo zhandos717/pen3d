@@ -25,7 +25,7 @@ run: venv        ## запустить редактор на http://127.0.0.1:87
 lan: venv        ## то же, но слушать всю локальную сеть (без авторизации!)
 	$(PY) bridge.py --lan $(if $(PORT),--port $(PORT))
 
-check: check-syntax check-db check-slicer check-i18n check-hinge check-params check-templates check-preflight check-fillet check-material check-parts check-text check-explode check-image check-hollow check-components check-preview check-edges  ## прогнать все проверки
+check: check-syntax check-db check-slicer check-i18n check-hinge check-params check-templates check-preflight check-fillet check-material check-parts check-text check-explode check-image check-hollow check-components check-preview check-edges check-layout  ## прогнать все проверки
 
 check-db: venv   ## база: запись, чтение, удаление на временном файле
 	$(PY) db.py
@@ -54,6 +54,9 @@ check-syntax:    ## синтаксис всех модулей: повторно
 
 check-edges:     ## рёбра детали: углы куба рисуются, Т-стык на плоской грани — нет
 	node web/js/edges.test.mjs
+
+check-layout:    ## раскладка деталей на стол: влезают, не пересекаются, слишком большое — отказ
+	node web/js/layout.test.mjs
 
 check-preview:   ## превью: уровни светов, приоритет кнопки над сценарием, роли и сценарии в файле
 	node web/js/preview.test.mjs
