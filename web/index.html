@@ -278,6 +278,19 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
   #comp-list .comp svg { grid-row:span 2; width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.5; }
   #comp-list .comp b { font-size:11.5px; font-weight:500; line-height:1.2; }
   #comp-list .comp small { font-size:10.5px; color:var(--dim); }
+  #pv-bar { position:absolute; left:50%; transform:translateX(-50%); bottom:104px; z-index:3; display:flex; flex-wrap:wrap;
+    gap:6px; align-items:center; justify-content:center; max-width:calc(100% - 140px); padding:6px 8px; background:var(--glass);
+    border:1px solid var(--hair); border-radius:10px; box-shadow:0 6px 22px var(--shadow); backdrop-filter:blur(8px); }
+  #pv-bar[hidden] { display:none; }
+  #pv-chips { display:flex; flex-wrap:wrap; gap:4px; }
+  #pv-bar .chip { padding:3px 10px; border-radius:999px; font-size:12px; }
+  #pv-bar .chip[aria-pressed="true"] { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
+  #pv-bar .chipw { display:inline-flex; }
+  #pv-bar .chipw .chip:first-child { border-radius:999px 0 0 999px; }
+  #pv-bar .chip.x { border-radius:0 999px 999px 0; padding:3px 7px; margin-left:-1px; color:var(--dim); }
+  #preview.on { background:var(--sel); border-color:var(--accent); color:var(--accent); }
+  #stage.previewing #ruler-x, #stage.previewing #ruler-y, #stage.previewing #labels, #stage.previewing .tools,
+  #stage.previewing #dims, #stage.previewing #pan-bar { display:none; }
   input.fx { font-family: ui-monospace, monospace; color:var(--fx); }
 </style>
 
@@ -456,11 +469,17 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
       <label class="f">зазор, мм <input id="explode-gap" type="text" inputmode="decimal" value="8"></label>
     </div>
     <div id="explode-ov"><svg></svg></div>
+    <div id="pv-bar" hidden>
+      <div id="pv-chips"></div>
+      <button class="chip" id="pv-add" title="запомнить режимы светов, как они сейчас заданы в свойствах">+ сценарий</button>
+      <label class="f chk" title="короткий тон при нажатии кнопки">звук <input id="pv-sound" type="checkbox" checked></label>
+    </div>
     <div class="views">
       <button class="icon" data-view="iso" title="1">3D</button>
       <button class="icon" data-view="top" title="2">Сверху</button>
       <button class="icon" data-view="front" title="3">Спереди</button>
       <button class="icon" data-view="side" title="4">Сбоку</button>
+      <button class="icon" id="preview" title="Превью: изделие как настоящее — свет, тени, кнопки нажимаются, светы светятся. Печать не меняется">Превью</button>
       <button class="icon" id="explode" title="Вид в разборе: детали расходятся слоями, печать не меняется">Разобрать</button>
     </div>
     <div class="cap" id="dims"></div>
@@ -644,6 +663,23 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
             <label class="f">порядок <input id="p-exorder" type="text" inputmode="decimal" placeholder="авто"></label>
           </div>
           <label class="f">расстояние, мм <input id="p-exdist" type="text" inputmode="decimal" placeholder="авто"></label>
+          <label class="f" title="только для превью — на печать не влияет">роль в превью <select id="p-role">
+            <option value="">нет</option><option value="button">кнопка</option><option value="light">свет</option></select></label>
+          <div id="p-btn-rows" class="stack" style="gap:4px" hidden>
+            <label class="f">ход, мм <input id="p-travel" type="text" inputmode="decimal"></label>
+            <label class="f col">при нажатии включает <select id="p-links"></select></label>
+            <label class="f">режим света <select id="p-linkmode"><option value="off">выключен</option><option value="steady">горит</option><option value="pulse">пульс</option><option value="blink">мигание</option><option value="breathe">дыхание</option></select></label>
+          </div>
+          <div id="p-light-rows" class="stack" style="gap:4px" hidden>
+            <div class="pair">
+              <label class="f chk">цвет <input id="p-lcolor" type="color"></label>
+              <select id="p-lmode" aria-label="режим света"><option value="off">выключен</option><option value="steady">горит</option><option value="pulse">пульс</option><option value="blink">мигание</option><option value="breathe">дыхание</option></select>
+            </div>
+            <div class="pair">
+              <label class="f">яркость <input id="p-lpower" type="text" inputmode="decimal"></label>
+              <label class="f chk">ореол <input id="p-halo" type="checkbox"></label>
+            </div>
+          </div>
         </div>
         <div id="p-conns-row"><span class="hint">коннекторы:</span> <span id="p-conns"></span></div>
         <div class="acts">

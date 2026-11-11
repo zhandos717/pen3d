@@ -5,6 +5,8 @@ import { unitGeo, hingeShift } from './geometry.js';
 import { textShapes, dropSmall } from './textshape.js';
 import { imageShapes, imageReady, importImage, setImageReady, srcKey } from './imageshape.js';
 import { explodePlan, ease } from './explode.js';
+import { lightLevel, resolveLights, normRole, normScenarios, LIGHT_MODES } from './preview.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { parseStl } from './stl-import.js';
 import { buildResult, buildPart, cutPlan as partPlan, innerOf, holeGhost } from './csg.js';
 import { meshToStlAsync } from './stl.js';
@@ -30,7 +32,7 @@ const say = (t, k='') => { const s = $('status'); s.textContent = t; s.className
 // ---------- данные ----------
 // объект: {id,name,type:'box'|'cyl'|'poly'|'sketch',x,y,z,w,d,h,rot,sides,hole,vis,pts?}
 let objects = [], nextId = 1, selId = null, params = [];
-let parts = {}, connectors = [];      // имена деталей по o.grp; коннекторы на гранях тел (parts.js)
+let parts = {}, connectors = [], scenarios = [];      // имена деталей по o.grp; коннекторы на гранях тел (parts.js)
 const byId = id => objects.find(o => o.id === id);
 // калибровка посадок — свойство принтера, а не проекта: живёт в браузере
 let fitCal = +localStorage.fitCal || DEFAULT_CAL;
@@ -122,7 +124,8 @@ function plateTemp(){
 function updatePlateOption(){
   const has = agentBusy || objects.some(o => o.plate);
   $('plate-agent-opt').hidden = !has;
-  plates[1].group.visible = has;          // стол агента появляется, только когда на нём что-то есть
+  plates[0].group.visible = !previewOn;
+  plates[1].group.visible = has && !previewOn;          // стол агента появляется, только когда на нём что-то есть
   if(!has && printPlate() === 1) $('plate-print').value = '0';
 }
 
@@ -223,7 +226,7 @@ const raw = new THREE.Group(); scene.add(raw);
 // тёмная обводка на каждом теле — иначе однотонные тела впритык сливаются в одно пятно
 const EDGE_MAT = new THREE.LineBasicMaterial({color:0x0a0e12, transparent:true, opacity:.55});
 let resultMesh = null, showResult = false, overhangMesh = null;
-let cutting = false, cutMode = 'cut', exT = 0;   // exT — степень разбора 0..1, только вид   // режим «вырез/нарост по клику»: sync() не цепляет гизмо
+let cutting = false, cutMode = 'cut', exT = 0, previewOn = false;   // exT — степень разбора 0..1, только вид   // режим «вырез/нарост по клику»: sync() не цепляет гизмо
 
 const matCache = new Map();
 // ---------- детали с полостью: показ уже вырезанными ----------
@@ -256,6 +259,7 @@ function updatePartCuts(){
   for(const m of raw.children) m.children.forEach(c => c.visible = true);
   const byGrp = new Map();
   for(const o of objects) if(o.grp && o.vis) (byGrp.get(o.grp) || byGrp.set(o.grp, []).get(o.grp)).push(o);
+  if(previewOn){ const l = looseList(); if(l.length) byGrp.set(LOOSE, l); }
   for(const [g, e] of partCuts) if(!byGrp.has(g) || !partNeedsCut(byGrp.get(g))){ kill(e.mesh); partCuts.delete(g); }
   let stale = false;
   for(const [g, list] of byGrp){
@@ -274,10 +278,15 @@ function updatePartCuts(){
     partCutTimer = setTimeout(() => { if(gizmo.dragging) return updatePartCuts(); rebuildPartCuts(); }, 300);
   }
 }
+// в превью тела без детали тоже показываются вырезанными — одной «деталью»; кнопки и светы
+// из неё исключены, чтобы двигаться и светиться по отдельности
+const LOOSE = '_loose';
+const looseList = () => objects.filter(o => !o.grp && o.vis && !o.ref && !o.role);
 function rebuildPartCuts(){
   const plan = partPlan(objects.filter(o => o.grp).map(geoOf));
+  if(previewOn){ const l = looseList(); if(l.length) plan.groups.push({...partPlan(l.map(geoOf)).loose, grp: LOOSE}); }
   for(const g of plan.groups){
-    const list = objects.filter(o => o.grp === g.grp && o.vis);
+    const list = g.grp === LOOSE ? looseList() : objects.filter(o => o.grp === g.grp && o.vis);
     if(!partNeedsCut(list)) continue;
     const key = partKey(list), old = partCuts.get(g.grp);
     if(old && old.key === key) continue;
@@ -286,6 +295,7 @@ function rebuildPartCuts(){
     if(old) kill(old.mesh);
     if(!mesh){ partCuts.delete(g.grp); continue; }
     mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, 25), EDGE_MAT));
+    mesh.userData.baseMat = mesh.material;
     cutsGroup.add(mesh); partCuts.set(g.grp, {key, mesh});
   }
   sync();
@@ -402,8 +412,9 @@ function sync(){
     objToMesh(o, m);
   });
   updatePartCuts();
+  if(previewOn) previewMeshes();
   const s = sel();
-  if(s && s.vis && !showResult && !sketching && !cutting && !exT) gizmo.attach(meshOf(s.id)); else gizmo.detach();
+  if(s && s.vis && !showResult && !sketching && !cutting && !exT && !previewOn) gizmo.attach(meshOf(s.id)); else gizmo.detach();
   connectors = liveConnectors(connectors, objects); exPlan = null;
   renderList(); renderParams(); fillProps(); updateDims(); updateGhost(); drawConnectors();
   if(overhangMesh){ clearOverhang(); $('pre').hidden = true; }
@@ -446,7 +457,7 @@ try{
   if(saved){ hist.push(...saved.hist); redoStack.push(...saved.redo); }
 }catch(e){}
 const saveHist = () => { try{ localStorage.hist = JSON.stringify({hist, redo: redoStack}); }catch(e){} };
-const snapshot = () => JSON.stringify({objects, nextId, params, parts, connectors});
+const snapshot = () => JSON.stringify({objects, nextId, params, parts, connectors, scenarios});
 // push() — состояние ДО изменения; вызывать перед мутацией objects
 function push(){ hist.push(snapshot()); if(hist.length > 100) hist.shift(); redoStack.length = 0; saveHist(); }
 // Неполный объект (чужой или старый файл проекта) давал NaN в габаритах и матрицах,
@@ -467,6 +478,7 @@ function restore(s){
   objects = d.objects.map(fill); params = Array.isArray(d.params) ? d.params : [];
   parts = d.parts && typeof d.parts === 'object' ? d.parts : {};
   connectors = Array.isArray(d.connectors) ? d.connectors : [];
+  scenarios = normScenarios(d.scenarios); if(!scenarios.some(x => x.name === pvScenario)) pvScenario = null;
   nextId = +d.nextId || Math.max(0, ...objects.map(o => o.id)) + 1;
   if(!byId(selId)) selId = null;
   sync();
@@ -563,7 +575,7 @@ $('file').onchange = async e => {
   e.target.value = '';
 };
 $('clear').onclick = () => { if(!objects.length) return; if(!confirm('Очистить проект?')) return;
-  push(); objects = []; params = []; parts = {}; connectors = []; selId = null; nextId = 1; sync(); say('новый проект'); };
+  push(); objects = []; params = []; parts = {}; connectors = []; scenarios = []; selId = null; nextId = 1; sync(); say('новый проект'); };
 
 // ---------- объекты ----------
 // новую фигуру ставим справа от того, что уже на столе, а не поверх него
@@ -712,7 +724,7 @@ function select(id){
   hudOff = false;
   selId = id;
   const s = sel();
-  if(s && s.vis && !showResult && !sketching && !cutting && !exT) gizmo.attach(meshOf(s.id)); else gizmo.detach();
+  if(s && s.vis && !showResult && !sketching && !cutting && !exT && !previewOn) gizmo.attach(meshOf(s.id)); else gizmo.detach();
   document.querySelectorAll('#list .obj').forEach(r => r.classList.toggle('sel', +r.dataset.id === selId));
   fillProps(); updateGhost(); if(s) say(s.name);
 }
@@ -803,7 +815,21 @@ function fillProps(){
   }
   { const m = exMeta(o), f = (id, v) => { if(document.activeElement !== $(id)) $(id).value = v ?? ''; };
     f('p-label', m.label); f('p-exorder', m.exOrder); f('p-exdist', m.exDist); $('p-exdir').value = m.exDir || 'up';
-    $('p-label').placeholder = unitName(o); }
+    $('p-label').placeholder = unitName(o);
+    const role = m.role || '';
+    $('p-role').value = role;
+    $('p-btn-rows').hidden = role !== 'button'; $('p-light-rows').hidden = role !== 'light';
+    if(role === 'button'){
+      f('p-travel', m.travel ?? 1.5);
+      const lights = roleUnits('light');
+      $('p-links').innerHTML = '<option value="">— ничего —</option>' + lights.map(u =>
+        `<option value="${esc(u.key)}">${esc(u.name)}</option>`).join('');
+      $('p-links').value = (m.links || [])[0] || ''; $('p-linkmode').value = m.linkMode || 'pulse';
+    }
+    if(role === 'light'){
+      $('p-lcolor').value = m.lColor || '#46d9ff'; $('p-lmode').value = m.lMode || 'steady';
+      f('p-lpower', m.lPower ?? 1.5); $('p-halo').checked = m.halo !== false;
+    } }
   if(o.type === 'text'){
     if(document.activeElement !== $('p-text')) $('p-text').value = o.text || '';
     $('p-font').value = o.font || 'Arial'; $('p-bold').checked = o.bold !== false;
@@ -1213,6 +1239,7 @@ function pointerNdc(e){ const r = view.getBoundingClientRect();
 let downAt = null;
 view.addEventListener('pointerdown', e => { downAt = [e.clientX, e.clientY]; });
 view.addEventListener('pointerup', e => {
+  if(previewOn){ downAt = null; return; }          // в превью клик — нажатие кнопки, не выделение
   if(dragged){ dragged = false; downAt = null; return; }
   if(!downAt || sketching || gizmo.dragging) return;
   const moved = Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 4; downAt = null;
@@ -1366,6 +1393,167 @@ function renderConnList(o){
     push(); connectors = connectors.filter(c => c.id !== b.dataset.c); sync(); say('коннектор удалён'); });
 }
 
+// ---------- превью изделия ----------
+// Готовое изделие: вырезанные детали, свет с отражениями, мягкая тень, без стола и гизмо.
+// Роли (кнопка, свет) и сценарии — только вид, на печать не влияют.
+let pvScenario = null, pvEnv = null, pvFloor = null;
+const held = new Set(), pressAmt = new Map(), lightMats = new Map(), halos = new Map();
+const haloGroup = new THREE.Group(); scene.add(haloGroup);
+const haloTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d'), r = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(.35, 'rgba(255,255,255,.35)'); r.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = r; g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+})();
+// детали и тела с ролью: ключ, имя, поля роли, тела
+function roleUnits(role){
+  const out = new Map();
+  for(const o of objects){
+    const m = exMeta(o); if(m.role !== role) continue;
+    const k = unitKey(o), u = out.get(k) || {key: k, name: unitName(o), meta: m, ids: [], first: null};
+    u.ids.push(o.id); if(!o.hole && !u.first) u.first = o; out.set(k, u);
+  }
+  return [...out.values()];
+}
+function previewMeshes(){
+  for(const o of objects){
+    const m = meshOf(o.id); if(!m) continue;
+    if(o.hole || o.keepout) m.visible = false;
+    m.castShadow = true;
+  }
+  for(const c of partCuts.values()) c.mesh.castShadow = true;
+}
+function setPreview(on){
+  previewOn = on;
+  $('preview').classList.toggle('on', on); $('pv-bar').hidden = !on; $('stage').classList.toggle('previewing', on);
+  if(on && showResult) $('result').click();
+  if(on && cutting) cutOff();
+  if(on && !pvEnv) pvEnv = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), .04).texture;
+  if(!pvFloor){
+    pvFloor = new THREE.Mesh(new THREE.PlaneGeometry(2000, 2000), new THREE.ShadowMaterial({opacity: .18}));
+    pvFloor.rotation.x = -Math.PI / 2; pvFloor.position.y = -.02; pvFloor.receiveShadow = true; scene.add(pvFloor);
+    const sc = keyLight.shadow.camera; sc.left = sc.bottom = -180; sc.right = sc.top = 180; sc.near = 1; sc.far = 800;
+    keyLight.shadow.mapSize.set(2048, 2048); keyLight.shadow.radius = 6; keyLight.shadow.bias = -.0005;
+  }
+  pvFloor.visible = on;
+  scene.environment = on ? pvEnv : null;
+  renderer.toneMapping = on ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping; renderer.toneMappingExposure = .9;
+  renderer.shadowMap.enabled = on; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  keyLight.castShadow = on; on ? keyLight.position.set(120, 260, 160) : keyLight.position.set(1, 2, 1);
+  hemi.intensity = on ? .7 : 2;
+  orbit.autoRotate = on; orbit.autoRotateSpeed = 1.1;
+  // материалы обновляются, когда меняется режим теней — иначе шейдеры собраны без них
+  scene.traverse(n => { if(n.material) [].concat(n.material).forEach(mt => mt.needsUpdate = true); });
+  if(!on){
+    held.clear(); pressAmt.clear(); pressOff.clear();
+    for(const c of partCuts.values()) if(c.mesh.userData.baseMat) c.mesh.material = c.mesh.userData.baseMat;
+    for(const h of halos.values()) h.visible = false;
+  }
+  renderScenarios(); sync(); applyExplode();
+  say(on ? 'превью: держи кнопки мышью · сценарии внизу · печать не меняется' : 'превью выключено');
+}
+function stepPreview(){
+  if(!previewOn) return;
+  const t = performance.now() / 1000;
+  // кнопки: плавно утапливаются вдоль своей нормали, пока держишь
+  const buttons = roleUnits('button');
+  let moving = false;
+  for(const u of buttons){
+    const target = held.has(u.key) ? 1 : 0, a0 = pressAmt.get(u.key) || 0, a = a0 + (target - a0) * .35;
+    pressAmt.set(u.key, Math.abs(a - target) < .002 ? target : a);
+    if(Math.abs(a - a0) > 1e-4) moving = true;
+    const o = u.first; if(!o) continue;
+    const n = new THREE.Vector3(0, 1, 0).applyEuler(new THREE.Euler(THREE.MathUtils.degToRad(o.rx || 0),
+      THREE.MathUtils.degToRad(o.rot || 0), THREE.MathUtils.degToRad(o.rz || 0), 'YXZ'));
+    if(a > 1e-3) pressOff.set(u.key, n.multiplyScalar(-(u.meta.travel ?? 1.5) * a)); else pressOff.delete(u.key);
+  }
+  if(moving || pressWas) applyExplode();
+  // светы: базовый режим → сценарий → удерживаемые кнопки
+  const lights = roleUnits('light'), base = {}, btns = {};
+  for(const u of lights) base[u.key] = {mode: u.meta.lMode || 'steady', color: u.meta.lColor || '#46d9ff'};
+  for(const u of buttons) btns[u.key] = {links: u.meta.links || [], linkMode: u.meta.linkMode || 'pulse'};
+  const res = resolveLights(base, scenarios.find(x => x.name === pvScenario), btns, held);
+  for(const u of lights){
+    const r = res[u.key], lv = lightLevel(r.mode, t), pw = u.meta.lPower ?? 1.5;
+    let mat = lightMats.get(u.key);
+    if(!mat){ mat = new THREE.MeshStandardMaterial({roughness: .25, metalness: 0}); lightMats.set(u.key, mat); }
+    mat.color.set(u.first?.color || '#ffffff'); mat.emissive.set(r.color); mat.emissiveIntensity = lv * pw;
+    for(const id of u.ids){ const m = meshOf(id), o = byId(id); if(m && !o.hole) m.material = mat; }
+    const cut = u.key.startsWith('g:') && partCuts.get(u.key.slice(2)); if(cut) cut.mesh.material = mat;
+    let h = halos.get(u.key);
+    if(!h){ h = new THREE.Sprite(new THREE.SpriteMaterial({map: haloTex, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false}));
+      halos.set(u.key, h); haloGroup.add(h); }
+    const b = new THREE.Box3();
+    for(const id of u.ids){ const m = meshOf(id); if(m && !byId(id).hole){ m.updateMatrixWorld(); b.expandByObject(m); } }
+    h.visible = u.meta.halo !== false && lv > .01 && !b.isEmpty();
+    if(h.visible){
+      const sz = b.getSize(new THREE.Vector3()); b.getCenter(h.position);
+      h.scale.setScalar(Math.max(sz.x, sz.z) * 1.9 + 6); h.material.color.set(r.color); h.material.opacity = Math.min(1, lv * .55 * pw);
+    }
+  }
+  for(const [k, h] of halos) if(!lights.some(u => u.key === k)) h.visible = false;
+}
+let audio = null;
+function tone(freq, dur = .09){
+  if(!$('pv-sound').checked) return;
+  try{
+    audio ||= new AudioContext();
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.frequency.value = freq; g.gain.setValueAtTime(.12, audio.currentTime); g.gain.exponentialRampToValueAtTime(.001, audio.currentTime + dur);
+    o.connect(g).connect(audio.destination); o.start(); o.stop(audio.currentTime + dur);
+  }catch(e){}
+}
+view.addEventListener('pointerdown', e => {
+  if(!previewOn || e.button !== 0) return;
+  orbit.autoRotate = false;
+  pointerNdc(e); ray.setFromCamera(ndc, cam);
+  const hit = ray.intersectObjects(raw.children.filter(m => m.visible))[0], o = hit && byId(hit.object.userData.id);
+  if(!o || exMeta(o).role !== 'button') return;
+  held.add(unitKey(o)); orbit.enabled = false; tone(660); tone(990, .12);
+}, true);
+const release = () => { if(!held.size) return; held.clear(); orbit.enabled = true; tone(520, .07); };
+view.addEventListener('pointerup', release); view.addEventListener('pointerleave', release);
+$('preview').onclick = () => setPreview(!previewOn);
+function renderScenarios(){
+  const box = $('pv-chips');
+  box.innerHTML = [`<button class="chip" data-sc="" aria-pressed="${!pvScenario}">как в свойствах</button>`,
+    ...scenarios.map(x => `<span class="chipw"><button class="chip" data-sc="${esc(x.name)}" aria-pressed="${x.name === pvScenario}">${esc(x.name)}</button><button class="chip x" data-del="${esc(x.name)}" title="удалить сценарий">×</button></span>`)].join('');
+  box.querySelectorAll('[data-sc]').forEach(b => b.onclick = () => { pvScenario = b.dataset.sc || null; renderScenarios(); });
+  box.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
+    push(); scenarios = scenarios.filter(x => x.name !== b.dataset.del); if(pvScenario === b.dataset.del) pvScenario = null; renderScenarios(); persist(); });
+}
+// сценарий — снимок режимов и цветов всех светов, какими они сейчас заданы в свойствах
+$('pv-add').onclick = () => {
+  const lights = roleUnits('light');
+  if(!lights.length) return say('нет ни одного света — задай детали роль «свет» в свойствах', 'err');
+  const name = prompt('Название сценария (например, «Зарядка»):', ''); if(!name?.trim()) return;
+  push();
+  scenarios = scenarios.filter(x => x.name !== name.trim()).concat({name: name.trim(),
+    lights: Object.fromEntries(lights.map(u => [u.key, {mode: u.meta.lMode || 'steady', color: u.meta.lColor || '#46d9ff'}]))});
+  pvScenario = name.trim(); renderScenarios(); persist();
+  say(`сценарий «${name.trim()}» сохранён: режимы светов как сейчас в свойствах`, 'ok');
+};
+function setRole(patch){
+  const o = sel(); if(!o) return;
+  const m = exMeta(o);
+  push();
+  for(const k of ['role', 'travel', 'links', 'linkMode', 'lColor', 'lMode', 'lPower', 'halo']) if(!(k in patch)) continue; else m[k] = patch[k];
+  const n = normRole(m);
+  for(const k of ['role', 'travel', 'links', 'linkMode', 'lColor', 'lMode', 'lPower', 'halo']) delete m[k];
+  Object.assign(m, n);
+  sync();
+}
+$('p-role').onchange = e => setRole({role: e.target.value});
+$('p-travel').onchange = e => setRole({travel: evalExpr(e.target.value, paramValues(params).vals)});
+$('p-links').onchange = e => setRole({links: e.target.value ? [e.target.value] : []});
+$('p-linkmode').onchange = e => setRole({linkMode: e.target.value});
+$('p-lcolor').onchange = e => setRole({lColor: e.target.value});
+$('p-lmode').onchange = e => setRole({lMode: e.target.value});
+$('p-lpower').onchange = e => setRole({lPower: evalExpr(e.target.value, paramValues(params).vals)});
+$('p-halo').onchange = e => setRole({halo: e.target.checked});
+['p-travel', 'p-lpower'].forEach(id => $(id).onkeydown = e => { if(e.key === 'Enter') e.target.blur(); e.stopPropagation(); });
+
 // ---------- вид в разборе ----------
 // единица разлёта — деталь (группа) или тело; её поля разбора живут в parts[grp] или в самом теле
 const unitKey = o => o.grp ? 'g:' + o.grp : 'b:' + o.id;
@@ -1420,19 +1608,26 @@ function stepExplode(){
   applyExplode();
   if(k >= 1){ const to = exAnim.to; exAnim = null; setExplode(to, false); }
 }
+// положение мешей на экране: собранное + разбор + утопленная кнопка превью
+const pressOff = new Map();                  // ключ детали → смещение нажатой кнопки
+let pressWas = false;
 function applyExplode(){
-  if(!exT && !exPlan) return;
-  if(!exPlan) buildExplode();
-  const e = ease(exT);
+  const press = pressOff.size > 0;
+  if(!exT && !exPlan && !press && !pressWas) return;
+  pressWas = press;
+  if(exT && !exPlan) buildExplode();
+  const e = exT ? ease(exT) : 0;
   for(const o of objects){
     const m = meshOf(o.id); if(!m) continue;
     m.position.set(o.x + (o.plate ? PLATE_GAP : 0), o.z + o.h/2, o.y);
-    const p = exPlan.plan[exUnitOf.get(o.id)]; if(!p || !e) continue;
-    if(p.dir === 'side') m.position.x += p.off * e; else m.position.y += p.off * e;
+    const p = e && exPlan?.plan[exUnitOf.get(o.id)];
+    if(p){ if(p.dir === 'side') m.position.x += p.off * e; else m.position.y += p.off * e; }
+    const v = pressOff.get(unitKey(o)); if(v) m.position.add(v);
   }
   for(const [g, c] of partCuts){
-    const p = e && exPlan.plan['g:' + g];
+    const p = e && exPlan?.plan['g:' + g];
     c.mesh.position.set(p && p.dir === 'side' ? p.off * e : 0, p && p.dir !== 'side' ? p.off * e : 0, 0);
+    const v = pressOff.get('g:' + g); if(v) c.mesh.position.add(v);
   }
   if(!exT) exPlan = null;
 }
@@ -2388,7 +2583,7 @@ function drawLabels(){
   // мини-панель висит над выбранной фигурой, чтобы не бегать в угол сцены
   const hud = $('hud'), selHud = sel(), mHud = selHud && meshOf(selHud.id);
   // прячем на время перетаскивания: панель прыгала бы за фигурой и мешала целиться
-  if(mHud && mHud.visible && !sketching && !cutting && !exT && !gizmo.dragging && !hudOff){
+  if(mHud && mHud.visible && !sketching && !cutting && !exT && !previewOn && !gizmo.dragging && !hudOff){
     mHud.updateMatrixWorld();
     const b = new THREE.Box3().setFromObject(mHud), c = new THREE.Vector3();
     b.getCenter(c);
@@ -2554,7 +2749,7 @@ function loop(){
   if(view.width !== Math.round(w*dpr) || view.height !== Math.round(h*dpr)){
     renderer.setSize(w, h, false); cam.aspect = w/h; cam.updateProjectionMatrix(); }
   requestAnimationFrame(loop);
-  stepFly(); stepPulse(); stepExplode(); orbit.update(); updateGridLOD(); saveCam(); renderer.render(scene, cam); drawExplodeLabels();
+  stepFly(); stepPulse(); stepExplode(); stepPreview(); orbit.update(); updateGridLOD(); saveCam(); renderer.render(scene, cam); drawExplodeLabels();
   try{ drawLabels(); drawRulers(); }catch(e){ window.__lastErr = e.message + ' @ ' + (e.stack||'').split('\n')[1]; }
 }
 // всё состояние приезжает из базы одним запросом
@@ -2614,7 +2809,7 @@ try{
 }catch(e){}
 
 // в скрытой вкладке requestAnimationFrame стоит — кадр разбора и выносок можно прогнать руками
-window.__tick = () => { stepExplode(); drawExplodeLabels(); };
-window.__dbg = () => ({objects, selId, parts, connectors, cuts: [...partCuts].map(([g, c]) => [g, c.mesh.geometry.attributes.position.count / 3, c.mesh.visible]), cutMesh: g => partCuts.get(g)?.mesh, explode: exPlan && exPlan.units.map(u => [u.o.name, exPlan.plan[u.key].layer, +exPlan.plan[u.key].off.toFixed(1), u.ids.length]), arrows: connGroup.children.map(a => a.position.toArray().map(v => +v.toFixed(1))), долгиеЗадачи: window.__long.slice(-5), hist: hist.length, redo: redoStack.length, meshes: raw.children.length,
+window.__tick = () => { stepExplode(); stepPreview(); drawExplodeLabels(); };
+window.__dbg = () => ({screenOf: id => { const m = meshOf(id); m.updateMatrixWorld(); const p = new THREE.Box3().setFromObject(m).getCenter(new THREE.Vector3()).project(cam), r = view.getBoundingClientRect(); return [r.left + (p.x*.5 + .5) * r.width, r.top + (-p.y*.5 + .5) * r.height]; }, objects, selId, parts, connectors, scenarios, preview: {on: previewOn, held: [...held], press: [...pressOff].map(([k, v]) => [k, +v.length().toFixed(2)]), lights: [...lightMats].map(([k, m]) => [k, +m.emissiveIntensity.toFixed(2), '#' + m.emissive.getHexString()]), halos: [...halos].filter(([, h]) => h.visible).map(([k]) => k), env: !!scene.environment, shadows: renderer.shadowMap.enabled}, cuts: [...partCuts].map(([g, c]) => [g, c.mesh.geometry.attributes.position.count / 3, c.mesh.visible]), cutMesh: g => partCuts.get(g)?.mesh, explode: exPlan && exPlan.units.map(u => [u.o.name, exPlan.plan[u.key].layer, +exPlan.plan[u.key].off.toFixed(1), u.ids.length]), arrows: connGroup.children.map(a => a.position.toArray().map(v => +v.toFixed(1))), долгиеЗадачи: window.__long.slice(-5), hist: hist.length, redo: redoStack.length, meshes: raw.children.length,
   result: !!resultMesh, plate: printPlate(),
   ghost: ghostDepth && {depth:+ghostDepth.size.y.toFixed(2), top:+ghostDepth.top.toFixed(2)}, cam: [+cam.position.x.toFixed(1), +orbit.target.x.toFixed(1)]});
