@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { unitGeo, hingeShift } from './geometry.js';
+import { unitGeo, hingeShift, featureEdges } from './geometry.js';
 import { textShapes, dropSmall } from './textshape.js';
 import { imageShapes, imageReady, importImage, setImageReady, srcKey } from './imageshape.js';
 import { explodePlan, ease } from './explode.js';
@@ -294,7 +294,7 @@ function rebuildPartCuts(){
     try{ mesh = buildPart({...g, holes: g.holes.concat(globalHolesFor(list).map(geoOf))}, (o, b) => objToMesh(o, b), solidMat(g.solids[0]?.color)); }catch(err){ say('деталь не вырезалась: ' + err.message, 'err'); }
     if(old) kill(old.mesh);
     if(!mesh){ partCuts.delete(g.grp); continue; }
-    mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, 25), EDGE_MAT));
+    mesh.add(new THREE.LineSegments(featureEdges(mesh.geometry, 25), EDGE_MAT));
     mesh.userData.baseMat = mesh.material;
     cutsGroup.add(mesh); partCuts.set(g.grp, {key, mesh});
   }
@@ -1660,13 +1660,13 @@ function drawExplodeLabels(){
   els.slice(rows.length).forEach(e => e.remove());
   let lines = '';
   rows.forEach((q, i) => {
-    const el = els[i]; el.textContent = q.text; el.style.opacity = op;
+    const el = els[i]; putText(el, q.text); putStyle(el, 'opacity', String(op));
     const lx = Math.max(4, Math.min(W - el.offsetWidth - 4, q.left ? 70 : W - 70 - el.offsetWidth));
-    el.style.left = lx + 'px'; el.style.top = q.ly + 'px';
+    putStyle(el, 'left', lx + 'px'); putStyle(el, 'top', q.ly + 'px');
     const ax = q.left ? lx + el.offsetWidth : lx;
     lines += `<line x1="${ax}" y1="${q.ly}" x2="${q.x}" y2="${q.y}" opacity="${op * .55}"/><circle cx="${q.x}" cy="${q.y}" r="2.5" opacity="${op}"/>`;
   });
-  svg.innerHTML = lines;
+  if(svg.dataset.lines !== lines){ svg.innerHTML = lines; svg.dataset.lines = lines; }
 }
 $('explode').onclick = () => {
   const open = $('explode-bar').hidden;
@@ -2524,16 +2524,22 @@ $('cam').onerror = () => $('cam-hint').textContent = 'камера не отве
 const labels = $('labels');
 let hudAt = [-1, -1], hudOff = false;
 const pool = [];
+// подписи перерисовываются каждый кадр: запись того же текста — это мутация DOM, на которую
+// срабатывает наблюдатель перевода, а того же стиля — пересчёт раскладки
+// сравниваем с исходной строкой, а не textContent: перевод подменяет текст, и сравнение
+// с ним переписывало бы подпись каждый кадр
+const putText = (el, s) => { if(el._raw !== s){ el._raw = s; el.textContent = s; } };
+const putStyle = (el, k, v) => { if(el.style[k] !== v) el.style[k] = v; };
 function label(i, text, v, cls){
   let el = pool[i];
   if(!el){ el = document.createElement('div'); labels.appendChild(el); pool[i] = el; }
   const p = v.clone().project(cam);
-  if(p.z > 1){ el.style.display = 'none'; return; }
-  el.style.display = ''; el.className = cls || '';
-  el.textContent = text;
-  const x = (p.x * .5 + .5) * labels.clientWidth, y = (-p.y * .5 + .5) * labels.clientHeight;
-  el.style.left = x + 'px';
-  el.style.top  = y + 'px';
+  if(p.z > 1){ putStyle(el, 'display', 'none'); return; }
+  putStyle(el, 'display', ''); cls = cls || '';
+  if(el.className !== cls) el.className = cls;
+  putText(el, text);
+  const x = Math.round((p.x * .5 + .5) * labels.clientWidth), y = Math.round((-p.y * .5 + .5) * labels.clientHeight);
+  putStyle(el, 'left', x + 'px');
   placed.push({el, x, y});
 }
 
@@ -2548,10 +2554,10 @@ function spread(){
       const prev = placed[j];
       if(Math.abs(cur.x - prev.x) < 70 && cur.y - prev.y < ROW){
         cur.y = prev.y + ROW;
-        cur.el.style.top = cur.y + 'px';
       }
     }
   }
+  for(const q of placed) putStyle(q.el, 'top', q.y + 'px');
 }
 const placed = [];
 // размер фигуры на экране в пикселях — по диагонали проекции её габарита
@@ -2602,13 +2608,13 @@ function drawLabels(){
       const yTop = (-p.y*.5 + .5) * H - 62;
       const yGizmo = (-pc.y*.5 + .5) * H - 184;
       const y = Math.round(Math.min(H - 8, Math.max(46, Math.min(yTop, yGizmo))));
-      hud.hidden = false;
+      if(hud.hidden) hud.hidden = false;
       if(x !== hudAt[0] || y !== hudAt[1]){       // без этого каждый кадр дёргается раскладка
         hud.style.left = x + 'px'; hud.style.top = y + 'px';
         hudAt = [x, y];
       }
-    } else hud.hidden = true;
-  } else hud.hidden = true;
+    } else if(!hud.hidden) hud.hidden = true;
+  } else if(!hud.hidden) hud.hidden = true;
 
   // Мелкая на экране фигура: пять подписей вокруг неё ложатся друг на друга и на гизмо,
   // поэтому размеры сводим в одну строку под фигурой, глубину отверстия — в одну над ней
@@ -2650,7 +2656,7 @@ function drawLabels(){
     const [a, bb] = measurePts, mid = a.clone().add(bb).multiplyScalar(.5);
     label(i++, `${a.distanceTo(bb).toFixed(2)} мм`, mid, 'measure');
   }
-  for(; i < pool.length; i++) pool[i].style.display = 'none';
+  for(; i < pool.length; i++) putStyle(pool[i], 'display', 'none');
   spread();
 }
 
@@ -2813,7 +2819,7 @@ try{
 }catch(e){}
 
 // в скрытой вкладке requestAnimationFrame стоит — кадр разбора и выносок можно прогнать руками
-window.__tick = () => { stepExplode(); stepPreview(); drawExplodeLabels(); };
+window.__tick = () => { stepExplode(); stepPreview(); drawExplodeLabels(); drawLabels(); };
 window.__dbg = () => ({screenOf: id => { const m = meshOf(id); m.updateMatrixWorld(); const p = new THREE.Box3().setFromObject(m).getCenter(new THREE.Vector3()).project(cam), r = view.getBoundingClientRect(); return [r.left + (p.x*.5 + .5) * r.width, r.top + (-p.y*.5 + .5) * r.height]; }, objects, selId, parts, connectors, scenarios, preview: {on: previewOn, held: [...held], press: [...pressOff].map(([k, v]) => [k, +v.length().toFixed(2)]), lights: [...lightMats].map(([k, m]) => [k, +m.emissiveIntensity.toFixed(2), '#' + m.emissive.getHexString()]), halos: [...halos].filter(([, h]) => h.visible).map(([k]) => k), env: !!scene.environment, shadows: renderer.shadowMap.enabled}, cuts: [...partCuts].map(([g, c]) => [g, c.mesh.geometry.attributes.position.count / 3, c.mesh.visible]), cutMesh: g => partCuts.get(g)?.mesh, explode: exPlan && exPlan.units.map(u => [u.o.name, exPlan.plan[u.key].layer, +exPlan.plan[u.key].off.toFixed(1), u.ids.length]), arrows: connGroup.children.map(a => a.position.toArray().map(v => +v.toFixed(1))), долгиеЗадачи: window.__long.slice(-5), hist: hist.length, redo: redoStack.length, meshes: raw.children.length,
   result: !!resultMesh, plate: printPlate(),
   ghost: ghostDepth && {depth:+ghostDepth.size.y.toFixed(2), top:+ghostDepth.top.toFixed(2)}, cam: [+cam.position.x.toFixed(1), +orbit.target.x.toFixed(1)]});

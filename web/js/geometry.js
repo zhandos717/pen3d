@@ -197,17 +197,68 @@ export function hingeShift(o, next){
     .sub(p.clone().applyEuler(eulerOf(next.rx, next.rot, next.rz)));
 }
 
-export function unitGeo(o){
-  if(o.type === 'stl') return stlUnitGeo(o.pts3);
+function shapesOf(o){
   if(o.type === 'image'){
     const t = o.img && imageShapes(o.img, o.thr ?? 180, o.eps ?? .8);
-    if(!t) return new THREE.BoxGeometry(1, 1, 1);           // растр ещё грузится — перестроим по готовности
-    const k = dropSmall(t.shapes, o.w, o.d, 1);
-    return k.shapes.length ? textGeo(k.shapes) : new THREE.BoxGeometry(1, 1, 1);
+    return t && dropSmall(t.shapes, o.w, o.d, 1).shapes;
   }
-  if(o.type === 'text'){
-    const t = textShapes(o.text || 'Текст', o.font || 'Arial', o.bold !== false);
-    return t ? textGeo(t.shapes) : new THREE.BoxGeometry(1, 1, 1);
+  const t = textShapes(o.text || 'Текст', o.font || 'Arial', o.bold !== false);
+  return t?.shapes;
+}
+
+// Решётка из сотни отверстий одним телом режется минуту: крупный треугольник грани
+// пересекают тысячи стенок, и его разбиение растёт квадратично. Соседние фигуры пачками
+// по n режутся в десятки раз быстрее — грань дробится постепенно и локально.
+export function unitGeoChunks(o, n = 8){
+  if(o.type !== 'image' && o.type !== 'text') return [unitGeo(o)];
+  const sh = shapesOf(o);
+  if(!sh || sh.length <= n) return [unitGeo(o)];
+  const c = s => { let x = 0, y = 0; for(const p of s.outer){ x += p[0]; y += p[1]; } return [x / s.outer.length, y / s.outer.length]; };
+  const rows = Math.max(1, Math.round(Math.sqrt(sh.length / n)));
+  const sorted = sh.map(s => [s, c(s)]).sort((a, b) => Math.floor((a[1][1] + .5) * rows) - Math.floor((b[1][1] + .5) * rows) || a[1][0] - b[1][0]);
+  const out = [];
+  for(let i = 0; i < sorted.length; i += n) out.push(textGeo(sorted.slice(i, i + n).map(p => p[0])));
+  return out;
+}
+
+// Как EdgesGeometry, но без рёбер с одним соседом. После CSG на плоской грани полно
+// Т-стыков: такие рёбра EdgesGeometry считает границей и рисует всю триангуляцию.
+export function featureEdges(geo, angle = 25){
+  const pos = geo.attributes.position, idx = geo.index, cos = Math.cos(angle * Math.PI / 180);
+  const n = idx ? idx.count : pos.count, at = i => idx ? idx.getX(i) : i;
+  const q = v => Math.round(v * 1e4);
+  const key = i => `${q(pos.getX(i))},${q(pos.getY(i))},${q(pos.getZ(i))}`;
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  const edges = new Map(), out = [];
+  for(let f = 0; f < n; f += 3){
+    const v = [at(f), at(f + 1), at(f + 2)];
+    a.fromBufferAttribute(pos, v[0]); b.fromBufferAttribute(pos, v[1]); c.fromBufferAttribute(pos, v[2]);
+    const nr = new THREE.Vector3().subVectors(c, b).cross(new THREE.Vector3().subVectors(a, b));
+    if(nr.lengthSq() < 1e-20) continue;
+    nr.normalize();
+    const k = v.map(key);
+    for(let j = 0; j < 3; j++){
+      const k0 = k[j], k1 = k[(j + 1) % 3];
+      if(k0 === k1) continue;
+      const h = k0 < k1 ? k0 + '|' + k1 : k1 + '|' + k0;
+      const e = edges.get(h);
+      if(!e){ edges.set(h, {i: v[j], j: v[(j + 1) % 3], n: nr}); continue; }
+      if(e.n && e.n.dot(nr) <= cos){
+        out.push(pos.getX(e.i), pos.getY(e.i), pos.getZ(e.i), pos.getX(e.j), pos.getY(e.j), pos.getZ(e.j));
+      }
+      e.n = null;
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(out, 3));
+  return g;
+}
+
+export function unitGeo(o){
+  if(o.type === 'stl') return stlUnitGeo(o.pts3);
+  if(o.type === 'image' || o.type === 'text'){
+    const sh = shapesOf(o);                                  // растр ещё грузится — перестроим по готовности
+    return sh?.length ? textGeo(sh) : new THREE.BoxGeometry(1, 1, 1);
   }
   if(o.type === 'thread') return threadGeo(o);
   if(o.type === 'box') return new THREE.BoxGeometry(1,1,1);

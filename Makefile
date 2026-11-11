@@ -25,7 +25,7 @@ run: venv        ## запустить редактор на http://127.0.0.1:87
 lan: venv        ## то же, но слушать всю локальную сеть (без авторизации!)
 	$(PY) bridge.py --lan $(if $(PORT),--port $(PORT))
 
-check: check-db check-slicer check-i18n check-hinge check-params check-templates check-preflight check-fillet check-material check-parts check-text check-explode check-image check-hollow check-components check-preview  ## прогнать все проверки
+check: check-syntax check-db check-slicer check-i18n check-hinge check-params check-templates check-preflight check-fillet check-material check-parts check-text check-explode check-image check-hollow check-components check-preview  ## прогнать все проверки
 
 check-db: venv   ## база: запись, чтение, удаление на временном файле
 	$(PY) db.py
@@ -48,6 +48,9 @@ check-material: venv  ## печать под нужный пластик: дет
 
 check-parts:      ## детали и коннекторы: список по деталям, имена, осиротевшие коннекторы
 	node web/js/parts.test.mjs
+
+check-syntax:    ## синтаксис всех модулей: повторное объявление имени ломает страницу целиком
+	@for f in web/js/*.js; do node --input-type=module --check < $$f || { echo "  в $$f"; exit 1; }; done; echo "syntax: ok"
 
 check-preview:   ## превью: уровни светов, приоритет кнопки над сценарием, роли и сценарии в файле
 	node web/js/preview.test.mjs
