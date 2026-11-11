@@ -5,6 +5,7 @@ export function runSteps(steps, L){
   const ev = new L.Evaluator(); ev.attributes = ['position', 'normal'];
   const OPS = {add: L.ADDITION, cut: L.SUBTRACTION, keep: L.INTERSECTION};
   const brush = s => {
+    if(s.sub) s = runSteps(s.sub, L);
     const g = new L.BufferGeometry();
     g.setAttribute('position', new L.BufferAttribute(s.pos, 3));
     g.setAttribute('normal', new L.BufferAttribute(s.norm, 3));
