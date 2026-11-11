@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { unitGeo, hingeShift } from './geometry.js';
-import { textShapes } from './textshape.js';
+import { textShapes, dropSmall } from './textshape.js';
+import { imageShapes, imageReady, importImage, setImageReady, srcKey } from './imageshape.js';
 import { explodePlan, ease } from './explode.js';
 import { parseStl } from './stl-import.js';
 import { buildResult, holeGhost } from './csg.js';
@@ -307,6 +308,9 @@ const sig = o => o.type === 'poly' ? 'poly:' + o.sides
   : o.type === 'sketch' ? 'sketch:' + JSON.stringify(o.pts) + (o.edge > 0 ? `:${o.edge}:${o.w}:${o.h}` : '')   // скругление в единичной геометрии зависит от пропорций
   : o.type === 'thread' ? `thread:${o.dia}:${o.pitch}:${o.h}`
   : o.type === 'text' ? `text:${o.text}:${o.font}:${o.bold !== false}`
+  // мелочь отбрасывается по размеру в мм — геометрия зависит от w и d; готовность растра в
+  // ключе нужна, чтобы заглушка сменилась контуром, когда картинка догрузится
+  : o.type === 'image' ? `image:${o.img ? srcKey(o.img) : ''}:${o.thr}:${o.eps}:${o.w}:${o.d}:${o.img && imageReady(o.img, o.thr ?? 180, o.eps ?? .8)}`
   : o.type === 'stl' ? 'stl:' + o.id            // точки импорта неизменны — не перестраивать зря
   : o.type;
 
@@ -478,6 +482,7 @@ $('open').onclick = () => $('file').click();
 $('file').onchange = async e => {
   const f = e.target.files[0]; if(!f) return;
   try{
+    if(/\.(svg|png|jpe?g)$/i.test(f.name)){ await addImage(f); e.target.value = ''; return; }
     if(f.name.toLowerCase().endsWith('.stl')){
       const {pts3, w, d, h} = parseStl(await f.arrayBuffer());
       add('stl', {pts3, w, d, h, name: f.name.replace(/\.stl$/i, '')});
@@ -506,7 +511,7 @@ function freeSpot(o){
 
 function add(type, extra={}){
   const NAMES = {box:'Короб', cyl:'Цилиндр', poly:'Призма', sketch:'Эскиз', thread:'Резьба',
-                 sphere:'Шар', cone:'Конус', torus:'Кольцо', wedge:'Клин', text:'Текст'};
+                 sphere:'Шар', cone:'Конус', torus:'Кольцо', wedge:'Клин', text:'Текст', image:'Картинка'};
   const o = {id: nextId, name: NAMES[type] + ' ' + nextId,
     type, x:0, y:0, z:0, w:30, d:30, h:10, rot:0, rx:0, rz:0, sides:6, dia:10, pitch:1.5,
     color:BODY, shell:0, openTop:false, hole:false, vis:true, ...extra};
@@ -533,6 +538,36 @@ function setText(patch){
   push(); Object.assign(o, next, {w: +(o.d * t.aspect).toFixed(2)}); sync();
 }
 $('p-text').onchange = e => setText({text: e.target.value});
+// ---------- рельеф из картинки ----------
+// пропорцию узнаём только после растеризации: до неё w = d, потом выравниваем один раз
+setImageReady(() => {
+  for(const o of objects){
+    if(o.type !== 'image' || !o.fitAspect) continue;
+    const t = imageShapes(o.img, o.thr ?? 180, o.eps ?? .8);
+    if(t === null) continue;
+    if(t) o.w = +(o.d * t.aspect).toFixed(2);
+    delete o.fitAspect;
+  }
+  sync();
+});
+async function addImage(file){
+  try{
+    const img = await importImage(file);
+    add('image', {img, thr: 180, eps: .8, d: 20, h: 1.5, w: 20, fitAspect: true, name: file.name.replace(/\.[a-z]+$/i, '')});
+    say(`картинка ${file.name}: высота 20 мм, ширина по пропорции · включи «отверстие», чтобы вдавить`, 'ok');
+  }catch(err){ say('картинка не открылась: ' + err.message, 'err'); }
+}
+$('img-add').onclick = () => $('imgfile').click();
+$('imgfile').onchange = e => { const f = e.target.files[0]; if(f) addImage(f); e.target.value = ''; };
+const setImg = (k, v, lo, hi) => {
+  const o = sel(); if(!o || o.type !== 'image') return;
+  const x = evalExpr(v, paramValues(params).vals);
+  if(!Number.isFinite(x)) return say('не число: ' + v, 'err'), fillProps();
+  push(); o[k] = Math.min(hi, Math.max(lo, x)); sync();
+};
+$('p-thr').onchange = e => setImg('thr', e.target.value, 1, 254);
+$('p-eps').onchange = e => setImg('eps', e.target.value, .2, 3);
+['p-thr', 'p-eps'].forEach(id => $(id).onkeydown = e => { if(e.key === 'Enter') e.target.blur(); e.stopPropagation(); });
 $('p-text').onkeydown = e => { if(e.key === 'Enter') e.target.blur(); e.stopPropagation(); };
 $('p-font').onchange = e => setText({font: e.target.value});
 $('p-bold').onchange = e => setText({bold: e.target.checked});
@@ -682,6 +717,15 @@ function fillProps(){
   $('p-fit').value = o.fit || '';
   $('p-edge-row').style.display = (o.type === 'sketch' || o.type === 'box') && !o.hole ? '' : 'none';
   $('p-text-row').style.display = o.type === 'text' ? '' : 'none';
+  $('p-img-row').style.display = o.type === 'image' ? '' : 'none';
+  if(o.type === 'image'){
+    if(document.activeElement !== $('p-thr')) $('p-thr').value = o.thr ?? 180;
+    if(document.activeElement !== $('p-eps')) $('p-eps').value = o.eps ?? .8;
+    const t = o.img && imageShapes(o.img, o.thr ?? 180, o.eps ?? .8), k = t && dropSmall(t.shapes, o.w, o.d, 1);
+    $('p-img-info').textContent = !t ? 'картинка готовится…'
+      : !k.shapes.length ? 'при этом пороге не осталось ничего — подними порог'
+      : k.dropped ? `отброшено мелких деталей < 1 мм: ${k.dropped} — увеличь картинку или упрости рисунок` : '';
+  }
   { const m = exMeta(o), f = (id, v) => { if(document.activeElement !== $(id)) $(id).value = v ?? ''; };
     f('p-label', m.label); f('p-exorder', m.exOrder); f('p-exdist', m.exDist); $('p-exdir').value = m.exDir || 'up';
     $('p-label').placeholder = unitName(o); }

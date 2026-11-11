@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { textShapes } from './textshape.js';
+import { textShapes, dropSmall } from './textshape.js';
+import { imageShapes } from './imageshape.js';
 
 // Винтовая поверхность: радиус зависит от z и угла, торцы закрыты — сетка водонепроницаемая.
 export function threadGeo(o){
@@ -182,6 +183,12 @@ export function hingeShift(o, next){
 
 export function unitGeo(o){
   if(o.type === 'stl') return stlUnitGeo(o.pts3);
+  if(o.type === 'image'){
+    const t = o.img && imageShapes(o.img, o.thr ?? 180, o.eps ?? .8);
+    if(!t) return new THREE.BoxGeometry(1, 1, 1);           // растр ещё грузится — перестроим по готовности
+    const k = dropSmall(t.shapes, o.w, o.d, 1);
+    return k.shapes.length ? textGeo(k.shapes) : new THREE.BoxGeometry(1, 1, 1);
+  }
   if(o.type === 'text'){
     const t = textShapes(o.text || 'Текст', o.font || 'Arial', o.bold !== false);
     return t ? textGeo(t.shapes) : new THREE.BoxGeometry(1, 1, 1);
