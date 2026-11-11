@@ -12,6 +12,7 @@ import { PROMPT, PROVIDERS, sanitize } from './ai.js';
 import { gearSketch, roundedRect } from './gear.js';
 import { t } from './i18n.js';
 import { preflight } from './preflight.js';
+import { COMPONENTS, instantiate } from './components.js';
 import { listRows, partName, nextName, liveConnectors } from './parts.js';
 import { TEMPLATES, defaults as tplDefaults, clampValues } from './templates.js';
 import { FITS, DEFAULT_CAL, gapFor, couponObjects, COUPON_GAPS } from './fit.js';
@@ -234,9 +235,21 @@ const INVISIBLE = new THREE.MeshBasicMaterial({visible: false});
 const cutsGroup = new THREE.Group(); scene.add(cutsGroup);
 const partCuts = new Map();                  // grp → {key, mesh}
 let partCutTimer = null;
-function partNeedsCut(list){ return list.some(o => o.hole) || list.some(o => !o.hole && innerOf(o)); }
+// отверстия, режущие всё (без детали или вырез компонента), задевающие деталь по габариту
+function globalHolesFor(list){
+  const box = o => [o.x - o.w/2, o.x + o.w/2, o.y - o.d/2, o.y + o.d/2, o.z, o.z + o.h];
+  const solids = list.filter(o => !o.hole && !o.ref).map(box);
+  if(!solids.length) return [];
+  return objects.filter(o => o.vis && o.hole && (!o.grp || o.cutsAll) && !list.includes(o)).filter(o => {
+    const a = box(o); return solids.some(b => a[0] < b[1] && b[0] < a[1] && a[2] < b[3] && b[2] < a[3] && a[4] < b[5] && b[4] < a[5]);
+  });
+}
+function partNeedsCut(list){
+  if(!list.some(o => !o.hole && !o.ref)) return false;
+  return list.some(o => o.hole && !o.cutsAll) || list.some(o => !o.hole && innerOf(o)) || globalHolesFor(list).length > 0;
+}
 function partKey(list){
-  return JSON.stringify(list.map(o => [sig(geoOf(o)), o.x, o.y, o.z, o.w, o.d, o.h, o.rot, o.rx, o.rz, o.shell,
+  return JSON.stringify(list.concat(globalHolesFor(list)).map(o => [sig(geoOf(o)), o.x, o.y, o.z, o.w, o.d, o.h, o.rot, o.rx, o.rz, o.shell,
     o.openTop, o.openBottom, o.hole, o.mode, o.color, o.plate, o.hole && gap(o)]));
 }
 function updatePartCuts(){
@@ -269,7 +282,7 @@ function rebuildPartCuts(){
     const key = partKey(list), old = partCuts.get(g.grp);
     if(old && old.key === key) continue;
     let mesh = null;
-    try{ mesh = buildPart(g, (o, b) => objToMesh(o, b), solidMat(g.solids[0]?.color)); }catch(err){ say('деталь не вырезалась: ' + err.message, 'err'); }
+    try{ mesh = buildPart({...g, holes: g.holes.concat(globalHolesFor(list).map(geoOf))}, (o, b) => objToMesh(o, b), solidMat(g.solids[0]?.color)); }catch(err){ say('деталь не вырезалась: ' + err.message, 'err'); }
     if(old) kill(old.mesh);
     if(!mesh){ partCuts.delete(g.grp); continue; }
     mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, 25), EDGE_MAT));
@@ -297,7 +310,7 @@ function updateGhost(){
   const o = sel();
   if(!o || !o.hole || !o.vis || showResult) return;
   // keep-тела не материал, а маска обрезки — в расчёт погружения не берём
-  const solids = objects.filter(x => x.vis && !x.hole && x.mode !== 'keep' && (x.plate || 0) === (o.plate || 0));
+  const solids = objects.filter(x => x.vis && !x.hole && !x.ref && x.mode !== 'keep' && (x.plate || 0) === (o.plate || 0));
   let res = null;
   try{ res = holeGhost(geoOf(o), solids, (q, m) => objToMesh(q, m), GHOST); }
   catch(e){ return; }
@@ -319,6 +332,7 @@ let ghostDepth = null;
 
 const MAT = {
   solid: new THREE.MeshStandardMaterial({color:BODY, roughness:.55, metalness:.05}),
+  keepout: new THREE.MeshBasicMaterial({color: 0xf0b429, transparent: true, opacity: .12, depthWrite: false}),
   hole:  new THREE.MeshStandardMaterial({color:0xd0455f, roughness:.6, transparent:true, opacity:.45}),
   result:new THREE.MeshStandardMaterial({color:0xd2d6dc, roughness:.5, metalness:.05}),
 };
@@ -329,7 +343,7 @@ function objToMesh(o, m){
   else m.scale.set(o.w + gap(o), o.h, o.d + gap(o));
   m.rotation.set(THREE.MathUtils.degToRad(o.rx || 0), THREE.MathUtils.degToRad(o.rot),
                  THREE.MathUtils.degToRad(o.rz || 0), 'YXZ');
-  m.material = o.hole ? MAT.hole : solidMat(o.color);
+  m.material = o.hole ? MAT.hole : o.keepout ? MAT.keepout : solidMat(o.color);
   m.visible = o.vis && !showResult;
 }
 function meshToObj(o){
@@ -943,6 +957,33 @@ $('tpl-add').onclick = () => {
       fixed.length ? 'err' : 'ok');
 };
 renderTpl();
+
+// ---------- библиотека компонентов ----------
+// модуль вставляется деталью: справочные тела и зона «не занимать» видны, но не печатаются,
+// вырезы режут корпус. Повернуть деталь целиком потом нельзя — поворот выбирается здесь
+const COMP_ICON = {
+  board: '<rect x="3" y="7" width="18" height="10" rx="1"/><rect x="13" y="9" width="6" height="6"/>',
+  cell: '<rect x="3" y="8" width="16" height="8" rx="2"/><path d="M19 11h2v2h-2"/>',
+  speaker: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/>',
+  button: '<rect x="5" y="11" width="14" height="7" rx="1"/><circle cx="12" cy="8" r="3"/>',
+  led: '<path d="M8 20v-9a4 4 0 0 1 8 0v9z"/><path d="M6 20h12"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4"/>',
+  port: '<rect x="4" y="9" width="16" height="6" rx="3"/>',
+  switch: '<rect x="3" y="10" width="18" height="6" rx="1"/><rect x="11" y="6" width="4" height="4"/>',
+  display: '<rect x="3" y="5" width="18" height="14" rx="1"/><rect x="5" y="8" width="14" height="8"/>',
+};
+const compSize = c => { const k = c.keepout[0]; return `${+k.w.toFixed(1)} × ${+k.d.toFixed(1)} × ${+k.h.toFixed(1)}`; };
+$('comp-list').innerHTML = COMPONENTS.map(c => `<button class="comp" data-comp="${c.id}" title="${esc(c.note)}">
+  <svg viewBox="0 0 24 24">${COMP_ICON[c.icon] || COMP_ICON.board}</svg><b>${esc(c.name)}</b><small>${compSize(c)} мм</small></button>`).join('');
+$('comp-list').querySelectorAll('[data-comp]').forEach(b => b.onclick = () => {
+  const c = COMPONENTS.find(x => x.id === b.dataset.comp), turn = +$('comp-turn').value || 0;
+  const k = c.keepout[0], spot = freeSpot({w: turn % 180 ? k.d : k.w, d: turn % 180 ? k.w : k.d});
+  const r = instantiate(c, {x: spot.x, y: spot.y, z: Math.max(0, -Math.min(...c.keepout.map(o => o.z))), turn}, nextId, 'c' + Date.now());
+  push();
+  objects.push(...r.objects); nextId = r.nextId; parts[r.grp] = r.part;
+  selId = r.objects[0].id; sync();
+  say(`${c.name}: модуль и зона «не занимать» не печатаются, вырезы режут корпус`, 'ok');
+});
 
 // ---------- посадки ----------
 // схема тестовой пластинки: клик по отверстию = «штырь сел здесь»; зазоры на схеме
@@ -1690,7 +1731,7 @@ function neededMaterial(){
 function runPreflight(){
   setExplode(0, false);
   clearOverhang();
-  const on = objects.filter(o => (o.plate || 0) === printPlate() && o.vis);
+  const on = objects.filter(o => (o.plate || 0) === printPlate() && o.vis && !o.ref);
   const bodies = on.map(o => {
     const m = meshOf(o.id); if(!m) return null;
     m.updateMatrixWorld();

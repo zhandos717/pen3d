@@ -273,6 +273,11 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
   #explode-ov .xl { position:absolute; transform:translateY(-50%); padding:2px 8px; border-radius:6px; font-size:12px;
     white-space:nowrap; background:var(--panel); color:var(--ink); border:1px solid var(--line); }
   #explode.on { background:var(--sel); border-color:var(--accent); color:var(--accent); }
+  #comp-list { display:grid; grid-template-columns:1fr 1fr; gap:4px; margin-top:6px; }
+  #comp-list .comp { display:grid; grid-template-columns:20px 1fr; gap:0 6px; align-items:center; text-align:left; padding:5px 6px; }
+  #comp-list .comp svg { grid-row:span 2; width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.5; }
+  #comp-list .comp b { font-size:11.5px; font-weight:500; line-height:1.2; }
+  #comp-list .comp small { font-size:10.5px; color:var(--dim); }
   input.fx { font-family: ui-monospace, monospace; color:var(--fx); }
 </style>
 
@@ -497,6 +502,13 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
           <div id="tpl-fields" class="stack"></div>
           <button id="tpl-add">Положить на стол</button>
         </div>
+      </div>
+      <div class="grp">
+        <h2>Компоненты</h2>
+        <label class="f">поворот при вставке <select id="comp-turn"><option value="0">0°</option><option value="90">90°</option>
+          <option value="180">180°</option><option value="270">270°</option></select></label>
+        <div id="comp-list"></div>
+        <div class="hint">Модули реальных размеров. Плата и зона «не занимать» видны, но не печатаются; окна разъёмов и решётки режут корпус.</div>
       </div>
       <div class="grp">
         <h2>Шестерня</h2>
