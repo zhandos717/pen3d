@@ -768,7 +768,8 @@ function renderList(){
     L.appendChild(row);
   }
 }
-const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+// и для текста, и для значений атрибутов: имена сценариев и деталей приходят из чужих файлов проекта
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 // ---------- табы правой панели ----------
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
@@ -1072,14 +1073,13 @@ function reapply(){
   if(bad.length) say('не посчитались формулы: ' + bad.join(', '), 'err');
   return !bad.length;
 }
-const attr = v => esc(v).replace(/"/g, '&quot;');
 function renderParams(){
   const L = $('params-list'), {vals, errors} = paramValues(params);
   $('params-empty').hidden = params.length > 0;
   L.innerHTML = params.map((p, i) => `
     <div class="prm${errors[p.name] ? ' bad' : ''}" data-i="${i}">
-      <input class="pn" value="${attr(p.name)}" spellcheck="false">
-      <input class="pe" value="${attr(p.expr)}" inputmode="decimal" spellcheck="false">
+      <input class="pn" value="${esc(p.name)}" spellcheck="false">
+      <input class="pe" value="${esc(p.expr)}" inputmode="decimal" spellcheck="false">
       <span class="pv">${errors[p.name] ? '?' : +vals[p.name].toFixed(3)}</span>
       <span class="pu">${usersOf(objects, p.name).length || ''}</span>
       <button class="sm pd" title="удалить">×</button>
