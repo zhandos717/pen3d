@@ -2,6 +2,7 @@ three@0.175.0/build/three.core.js
 three@0.175.0/build/three.module.js
 three@0.175.0/examples/jsm/controls/OrbitControls.js
 three@0.175.0/examples/jsm/controls/TransformControls.js
+three@0.175.0/examples/jsm/environments/RoomEnvironment.js
 three-bvh-csg@0.0.17/src/index.js
 three-bvh-csg@0.0.17/src/core/Brush.js
 three-bvh-csg@0.0.17/src/core/Evaluator.js
