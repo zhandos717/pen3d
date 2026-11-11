@@ -53,11 +53,13 @@ export function innerOf(o){
 // Что чем режется. Отверстие и полость тела из детали (grp) режут только свою деталь:
 // полость корпуса не должна вырезать батарейки, лежащие в нём. Отверстия без детали режут
 // всё, как раньше, — старые проекты собираются так же.
+// Справочные тела (модули из библиотеки компонентов, зоны «не занимать») не печатаются.
+// Вырез компонента (cutsAll) режет корпус, а не свою деталь — он общий, как отверстие без детали.
 export function cutPlan(objects){
-  const vis = objects.filter(o => o.vis);
+  const vis = objects.filter(o => o.vis && !o.ref);
   const groups = new Map(), loose = {solids: [], keeps: [], holes: []};
   for(const o of vis){
-    const g = o.grp ? (groups.get(o.grp) || groups.set(o.grp, {grp: o.grp, solids: [], keeps: [], holes: []}).get(o.grp)) : loose;
+    const g = o.grp && !o.cutsAll ? (groups.get(o.grp) || groups.set(o.grp, {grp: o.grp, solids: [], keeps: [], holes: []}).get(o.grp)) : loose;
     (o.hole ? g.holes : o.mode === 'keep' ? g.keeps : g.solids).push(o);
   }
   const fin = g => ({...g, cavities: g.solids.map(innerOf).filter(Boolean)});
