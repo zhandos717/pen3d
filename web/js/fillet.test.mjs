@@ -48,4 +48,9 @@ const perim = 2*(W + D - 4*R) + 2*Math.PI*R;
 const cut = 2 * (1 - Math.PI/4) * E*E * perim;
 assert.ok(Math.abs((v0 - v1) - cut) / cut < 0.15, `срезано ${(v0 - v1).toFixed(0)}, ожидалось ~${cut.toFixed(0)}`);
 assert.ok(Math.abs(mm(filletPrismGeo(g.pts, 0, 0)) - v0) < 1e-6 * v0, 'нулевое скругление = обычная призма');
+for(const side of ['top', 'bottom']){
+  const one = filletPrismGeo(g.pts, E/S, E/H, 6, side);
+  assert.ok(closed(one), `скругление только «${side}» — сетка замкнута`);
+  assert.ok(Math.abs((v0 - mm(one)) - cut/2) / (cut/2) < .15, `«${side}» срезает половину: ${(v0 - mm(one)).toFixed(0)}`);
+}
 console.log(`fillet: ok (срезано ${(v0 - v1).toFixed(0)} мм³ из ${v0.toFixed(0)})`);

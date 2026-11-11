@@ -382,7 +382,7 @@ function meshToObj(o){
 const meshOf = id => raw.children.find(m => m.userData.id === id);
 const kill = m => { m.geometry?.dispose(); m.children.forEach(c => c.geometry?.dispose()); m.parent?.remove(m); };
 const sig = o => o.type === 'poly' ? 'poly:' + o.sides
-  : o.type === 'sketch' ? 'sketch:' + JSON.stringify(o.pts) + (o.edge > 0 ? `:${o.edge}:${o.w}:${o.h}` : '')   // скругление в единичной геометрии зависит от пропорций
+  : o.type === 'sketch' ? 'sketch:' + JSON.stringify(o.pts) + (o.edge > 0 ? `:${o.edge}:${o.w}:${o.h}:${o.edgeSide || 'both'}` : '')   // скругление в единичной геометрии зависит от пропорций
   : o.type === 'thread' ? `thread:${o.dia}:${o.pitch}:${o.h}`
   : o.type === 'text' ? `text:${o.text}:${o.font}:${o.bold !== false}`
   // мелочь отбрасывается по размеру в мм — геометрия зависит от w и d; готовность растра в
@@ -618,6 +618,8 @@ function setText(patch){
   push(); Object.assign(o, next, {w: +(o.d * t.aspect).toFixed(2)}); sync();
 }
 $('p-text').onchange = e => setText({text: e.target.value});
+$('p-edgeside').onchange = e => { const o = sel(); if(!o) return; push();
+  if(e.target.value === 'both') delete o.edgeSide; else o.edgeSide = e.target.value; sync(); };
 // ---------- рельеф из картинки ----------
 // пропорцию узнаём только после растеризации: до неё w = d, потом выравниваем один раз
 setImageReady(() => {
@@ -796,6 +798,8 @@ function fillProps(){
   $('p-hinge').value = o.hinge || '';
   $('p-fit').value = o.fit || '';
   $('p-edge-row').style.display = (o.type === 'sketch' || o.type === 'box') && !o.hole ? '' : 'none';
+  $('p-edgeside-row').style.display = o.type === 'sketch' && o.edge > 0 && !o.hole ? '' : 'none';
+  $('p-edgeside').value = o.edgeSide || 'both';
   $('p-text-row').style.display = o.type === 'text' ? '' : 'none';
   // стенка есть и у эскиза — строки показываем здесь поверх Solid-панели, где только box/cyl/poly
   { const hollow = ['box', 'cyl', 'poly', 'sketch'].includes(o.type) && !o.hole;

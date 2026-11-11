@@ -94,13 +94,17 @@ export function insetPts(pts, k){
   return v.map((p, i) => { const q = p.clone().addScaledVector(inward[i], k); return [+q.x.toFixed(5), +q.y.toFixed(5)]; });
 }
 
-export function filletPrismGeo(pts, rp, rh, seg = 6){
+// side: 'both' | 'top' | 'bottom' — какое ребро скруглять; у крышки верх, у корпуса низ, и стык
+// двух деталей с одним контуром остаётся гладкой стенкой без желобка
+export function filletPrismGeo(pts, rp, rh, seg = 6, side = 'both'){
   const {v, inward} = contourWithInward(pts), n = v.length;
   const ring = k => v.map((p, i) => p.clone().addScaledVector(inward[i], k));
   // кольца снизу вверх: нижняя четверть, прямой бок, верхняя четверть
   const rings = [];
-  for(let s = seg; s >= 0; s--){ const f = s/seg*Math.PI/2; rings.push({r: ring(rp*(1 - Math.cos(f))), y: -.5 + rh*(1 - Math.sin(f))}); }
-  for(let s = 0; s <= seg; s++){ const f = s/seg*Math.PI/2; rings.push({r: ring(rp*(1 - Math.cos(f))), y: .5 - rh*(1 - Math.sin(f))}); }
+  if(side !== 'top') for(let s = seg; s >= 0; s--){ const f = s/seg*Math.PI/2; rings.push({r: ring(rp*(1 - Math.cos(f))), y: -.5 + rh*(1 - Math.sin(f))}); }
+  else rings.push({r: ring(0), y: -.5});
+  if(side !== 'bottom') for(let s = 0; s <= seg; s++){ const f = s/seg*Math.PI/2; rings.push({r: ring(rp*(1 - Math.cos(f))), y: .5 - rh*(1 - Math.sin(f))}); }
+  else rings.push({r: ring(0), y: .5});
   const pos = [], P = (q, y) => pos.push(q.x, y, -q.y);
   const top = rings[rings.length - 1], bot = rings[0];
   const faces = THREE.ShapeUtils.triangulateShape(top.r, []);
@@ -214,6 +218,6 @@ export function unitGeo(o){
   if(o.type === 'cyl' || o.type === 'poly')
     return new THREE.CylinderGeometry(.5,.5,1, o.type === 'cyl' ? 48 : o.sides, 1, false,
                                       o.type === 'poly' ? Math.PI/o.sides : 0);
-  if(o.edge > 0) return filletPrismGeo(o.pts, o.edge / o.w, o.edge / o.h);
+  if(o.edge > 0) return filletPrismGeo(o.pts, o.edge / o.w, o.edge / o.h, 6, o.edgeSide || 'both');
   return prismGeo(o.pts);   // sketch: контур нормализован в [-0.5,0.5]
 }

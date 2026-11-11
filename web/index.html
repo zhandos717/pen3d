@@ -652,6 +652,8 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
           </div>
           <label class="f" id="p-edge-row" title="скругляет верхнее и нижнее рёбра по всему контуру — деталь приятнее в руке">
             скругление рёбер, мм <input id="p-edge" type="text" inputmode="decimal" value="0"></label>
+          <label class="f" id="p-edgeside-row" title="крышка — верх, корпус — низ: стык двух деталей остаётся гладкой стенкой">скруглять <select id="p-edgeside">
+            <option value="both">верх и низ</option><option value="top">только верх</option><option value="bottom">только низ</option></select></label>
         </div>
         <div class="hint" id="grp-status" style="margin:2px 0 0"></div>
         <div id="p-ex" class="stack" style="gap:4px;margin-top:6px">
