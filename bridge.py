@@ -143,7 +143,7 @@ def check_scene(shapes):
         shell = o.get('shell') or 0
         if 0 < shell < 1.2:
             problems.append(f'{o["name"]}: стенка {shell} мм тоньше 1.2 мм, продавится')
-        if shell and not o.get('openTop'):
+        if shell and not o.get('openTop') and not o.get('openBottom'):
             span = round(max(o.get('w', 0), o.get('d', 0)) - 2*shell)
             problems.append(f'{o["name"]}: полость закрыта сверху — мостик {span} мм провиснет, '
                             'открой верх или добавь крышку отдельной деталью')

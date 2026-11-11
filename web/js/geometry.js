@@ -64,7 +64,9 @@ export function prismGeo(pts){
 // размаха контура) и по высоте (rh, в долях высоты) — после масштаба меша это один радиус в мм.
 // Контур сжимается внутрь по нормалям вершин: для выпуклых и скруглённых контуров точно,
 // у глубоко вогнутых сжатие больше радиуса вогнутости вывернет контур — это ограничение.
-export function filletPrismGeo(pts, rp, rh, seg = 6){
+// Контур в Vector2 против часовой без повторов и внутренние нормали вершин — биссектрисы
+// нормалей соседних рёбер, растянутые так, чтобы сдвиг k сохранял расстояние до рёбер
+function contourWithInward(pts){
   const v = [];
   for(const p of pts){
     const l = v[v.length-1];
@@ -74,7 +76,6 @@ export function filletPrismGeo(pts, rp, rh, seg = 6){
   if(v.length < 3) throw new Error('в контуре меньше трёх точек');
   if(THREE.ShapeUtils.isClockWise(v)) v.reverse();
   const n = v.length;
-  // внутренняя нормаль вершины — биссектриса нормалей соседних рёбер (контур против часовой)
   const inward = v.map((p, i) => {
     const a = v[(i + n - 1) % n], b = v[(i + 1) % n];
     const e1 = p.clone().sub(a).normalize(), e2 = b.clone().sub(p).normalize();
@@ -82,8 +83,19 @@ export function filletPrismGeo(pts, rp, rh, seg = 6){
     const m = n1.clone().add(n2); const len = m.length();
     if(len < 1e-6) return n1;
     m.divideScalar(len);
-    return m.multiplyScalar(1 / Math.max(.3, m.dot(n1)));      // сохраняем расстояние до рёбер
+    return m.multiplyScalar(1 / Math.max(.3, m.dot(n1)));
   });
+  return {v, inward};
+}
+
+// контур, сдвинутый внутрь на k (в тех же единицах) — внутренняя стенка полого эскиза
+export function insetPts(pts, k){
+  const {v, inward} = contourWithInward(pts);
+  return v.map((p, i) => { const q = p.clone().addScaledVector(inward[i], k); return [+q.x.toFixed(5), +q.y.toFixed(5)]; });
+}
+
+export function filletPrismGeo(pts, rp, rh, seg = 6){
+  const {v, inward} = contourWithInward(pts), n = v.length;
   const ring = k => v.map((p, i) => p.clone().addScaledVector(inward[i], k));
   // кольца снизу вверх: нижняя четверть, прямой бок, верхняя четверть
   const rings = [];

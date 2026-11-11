@@ -6,7 +6,7 @@ import { textShapes, dropSmall } from './textshape.js';
 import { imageShapes, imageReady, importImage, setImageReady, srcKey } from './imageshape.js';
 import { explodePlan, ease } from './explode.js';
 import { parseStl } from './stl-import.js';
-import { buildResult, holeGhost } from './csg.js';
+import { buildResult, buildPart, cutPlan as partPlan, innerOf, holeGhost } from './csg.js';
 import { meshToStlAsync } from './stl.js';
 import { PROMPT, PROVIDERS, sanitize } from './ai.js';
 import { gearSketch, roundedRect } from './gear.js';
@@ -225,6 +225,59 @@ let resultMesh = null, showResult = false, overhangMesh = null;
 let cutting = false, cutMode = 'cut', exT = 0;   // exT — степень разбора 0..1, только вид   // режим «вырез/нарост по клику»: sync() не цепляет гизмо
 
 const matCache = new Map();
+// ---------- детали с полостью: показ уже вырезанными ----------
+// Деталь, у которой есть стенка или свои отверстия, в обычном виде и в разборе рисуется
+// результатом CSG по ней одной: корпус — «корыто», в которое видно батарейки. Сырые тела
+// остаются в сцене невидимыми — по ним работают выделение, гизмо и инструменты по клику.
+// CSG долгий: пока деталь меняется, видны сырые тела, вырезанная версия собирается по паузе.
+const INVISIBLE = new THREE.MeshBasicMaterial({visible: false});
+const cutsGroup = new THREE.Group(); scene.add(cutsGroup);
+const partCuts = new Map();                  // grp → {key, mesh}
+let partCutTimer = null;
+function partNeedsCut(list){ return list.some(o => o.hole) || list.some(o => !o.hole && innerOf(o)); }
+function partKey(list){
+  return JSON.stringify(list.map(o => [sig(geoOf(o)), o.x, o.y, o.z, o.w, o.d, o.h, o.rot, o.rx, o.rz, o.shell,
+    o.openTop, o.openBottom, o.hole, o.mode, o.color, o.plate, o.hole && gap(o)]));
+}
+function updatePartCuts(){
+  for(const m of raw.children) m.children.forEach(c => c.visible = true);
+  const byGrp = new Map();
+  for(const o of objects) if(o.grp && o.vis) (byGrp.get(o.grp) || byGrp.set(o.grp, []).get(o.grp)).push(o);
+  for(const [g, e] of partCuts) if(!byGrp.has(g) || !partNeedsCut(byGrp.get(g))){ kill(e.mesh); partCuts.delete(g); }
+  let stale = false;
+  for(const [g, list] of byGrp){
+    if(!partNeedsCut(list)) continue;
+    const e = partCuts.get(g);
+    if(!e || e.key !== partKey(list)){ if(e?.mesh) e.mesh.visible = false; stale = true; continue; }
+    e.mesh.visible = !showResult;
+    if(showResult) continue;
+    for(const o of list){
+      const m = meshOf(o.id); if(!m || o.hole) continue;
+      m.material = INVISIBLE; m.children.forEach(c => c.visible = false);
+    }
+  }
+  if(stale){
+    clearTimeout(partCutTimer);
+    partCutTimer = setTimeout(() => { if(gizmo.dragging) return updatePartCuts(); rebuildPartCuts(); }, 300);
+  }
+}
+function rebuildPartCuts(){
+  const plan = partPlan(objects.filter(o => o.grp).map(geoOf));
+  for(const g of plan.groups){
+    const list = objects.filter(o => o.grp === g.grp && o.vis);
+    if(!partNeedsCut(list)) continue;
+    const key = partKey(list), old = partCuts.get(g.grp);
+    if(old && old.key === key) continue;
+    let mesh = null;
+    try{ mesh = buildPart(g, (o, b) => objToMesh(o, b), solidMat(g.solids[0]?.color)); }catch(err){ say('деталь не вырезалась: ' + err.message, 'err'); }
+    if(old) kill(old.mesh);
+    if(!mesh){ partCuts.delete(g.grp); continue; }
+    mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, 25), EDGE_MAT));
+    cutsGroup.add(mesh); partCuts.set(g.grp, {key, mesh});
+  }
+  sync();
+}
+
 function solidMat(color){
   const c = color || BODY;
   if(!matCache.has(c)) matCache.set(c, new THREE.MeshStandardMaterial({color:c, roughness:.5, metalness:.05}));
@@ -334,6 +387,7 @@ function sync(){
     }
     objToMesh(o, m);
   });
+  updatePartCuts();
   const s = sel();
   if(s && s.vis && !showResult && !sketching && !cutting && !exT) gizmo.attach(meshOf(s.id)); else gizmo.detach();
   connectors = liveConnectors(connectors, objects); exPlan = null;
@@ -699,7 +753,7 @@ const showTab = t => document.querySelector(`.tabs button[data-tab="${t}"]`).cli
 $('help-btn').onclick = () => { document.querySelector('aside.right').classList.remove('collapsed'); showTab('help'); };
 
 // ---------- свойства ----------
-const P = ['name','hole','keep','vis','color','w','d','h','x','y','z','rot','rx','rz','sides','dia','pitch','shell','openTop','hinge','fit','edge'];
+const P = ['name','hole','keep','vis','color','w','d','h','x','y','z','rot','rx','rz','sides','dia','pitch','shell','openTop','openBottom','hinge','fit','edge'];
 const NUM_FIELDS = new Set(['w','d','h','x','y','z','rot','rx','rz','sides','dia','pitch','shell','edge']);
 // сама отрисовка формы — в solid/props-panel.js (SolidJS), тут только источник данных
 // петля не в списке полей solid-панели, поэтому её значение подставляем сами
@@ -717,6 +771,13 @@ function fillProps(){
   $('p-fit').value = o.fit || '';
   $('p-edge-row').style.display = (o.type === 'sketch' || o.type === 'box') && !o.hole ? '' : 'none';
   $('p-text-row').style.display = o.type === 'text' ? '' : 'none';
+  // стенка есть и у эскиза — строки показываем здесь поверх Solid-панели, где только box/cyl/poly
+  { const hollow = ['box', 'cyl', 'poly', 'sketch'].includes(o.type) && !o.hole;
+    $('p-shell-row').style.display = hollow ? '' : 'none';
+    $('p-open-row').style.display = $('p-openb-row').style.display = hollow && o.shell > 0 ? '' : 'none';
+    $('p-openBottom').checked = !!o.openBottom;
+    if(o.type === 'sketch' && document.activeElement !== $('p-shell')) $('p-shell').value = o.shell || 0;
+    if(o.type === 'sketch') $('p-openTop').checked = !!o.openTop; }
   $('p-img-row').style.display = o.type === 'image' ? '' : 'none';
   if(o.type === 'image'){
     if(document.activeElement !== $('p-thr')) $('p-thr').value = o.thr ?? 180;
@@ -773,16 +834,22 @@ $('p-round').onchange = () => {
   push(); Object.assign(o, {type:'sketch', pts:g.pts, w:g.size, d:g.size, round:g.r, roundW:w, roundD:d});
   sync(); say(`угол скруглён: R${g.r.toFixed(1)}`, 'ok');
 };
+// настоящие ширина и глубина в плане: у эскиза w = d = размах, сам контур уже
+function planSize(o){
+  if(o.type !== 'sketch' || !o.pts) return [o.w, o.d];
+  const xs = o.pts.map(p => p[0]), ys = o.pts.map(p => p[1]);
+  return [(Math.max(...xs) - Math.min(...xs)) * o.w, (Math.max(...ys) - Math.min(...ys)) * o.d];
+}
 function clampField(k, v, o, warn = () => {}){
   if(k === 'sides') v = Math.max(3, Math.min(64, Math.round(v)));
   if(k === 'dia') v = Math.max(2, v);
   if(k === 'pitch') v = Math.max(.3, Math.min(v, 5));
   if(k === 'shell'){
     v = Math.max(0, v);
-    const lim = +(Math.min(o.w, o.d, o.h)/2 - .2).toFixed(1);
+    const lim = +(Math.min(...planSize(o), o.h)/2 - .2).toFixed(1);
     if(v > 0 && v < .8){ warn('стенка тоньше 0.8 мм — печатать нечем, поднял до 0.8', 'err'); v = .8; }
     if(v > lim){ warn(`стенка не может быть толще ${lim} мм для этой детали`, 'err'); v = Math.max(0, lim); }
-    if(v > 0 && !o.shell) o.openTop = true;     // закрытая полость = мостик через всю деталь
+    if(v > 0 && !o.shell && !o.openBottom) o.openTop = true;     // закрытая полость = мостик через всю деталь
   }
   if('wdh'.includes(k)) v = Math.max(.2, v);
   if(k === 'z') v = o.hole ? v : Math.max(0, v);
@@ -1015,7 +1082,7 @@ $('sink').onclick = () => {
 
 // закрытая сверху полость — мостик во всю ширину, слайсер его провесит
 function shellWarning(){
-  const bad = objects.filter(o => o.vis && !o.hole && o.shell > 0 && !o.openTop);
+  const bad = objects.filter(o => o.vis && !o.hole && o.shell > 0 && !o.openTop && !o.openBottom);
   if(!bad.length) return '';
   const w = Math.max(...bad.map(o => Math.max(o.w, o.d) - 2*o.shell));
   return ` · полость закрыта сверху: мостик ${w.toFixed(0)} мм провиснет, включи «открыть сверху»`;
@@ -1321,6 +1388,10 @@ function applyExplode(){
     m.position.set(o.x + (o.plate ? PLATE_GAP : 0), o.z + o.h/2, o.y);
     const p = exPlan.plan[exUnitOf.get(o.id)]; if(!p || !e) continue;
     if(p.dir === 'side') m.position.x += p.off * e; else m.position.y += p.off * e;
+  }
+  for(const [g, c] of partCuts){
+    const p = e && exPlan.plan['g:' + g];
+    c.mesh.position.set(p && p.dir === 'side' ? p.off * e : 0, p && p.dir !== 'side' ? p.off * e : 0, 0);
   }
   if(!exT) exPlan = null;
 }
@@ -2503,6 +2574,6 @@ try{
 
 // в скрытой вкладке requestAnimationFrame стоит — кадр разбора и выносок можно прогнать руками
 window.__tick = () => { stepExplode(); drawExplodeLabels(); };
-window.__dbg = () => ({objects, selId, parts, connectors, explode: exPlan && exPlan.units.map(u => [u.o.name, exPlan.plan[u.key].layer, +exPlan.plan[u.key].off.toFixed(1), u.ids.length]), arrows: connGroup.children.map(a => a.position.toArray().map(v => +v.toFixed(1))), долгиеЗадачи: window.__long.slice(-5), hist: hist.length, redo: redoStack.length, meshes: raw.children.length,
+window.__dbg = () => ({objects, selId, parts, connectors, cuts: [...partCuts].map(([g, c]) => [g, c.mesh.geometry.attributes.position.count / 3, c.mesh.visible]), cutMesh: g => partCuts.get(g)?.mesh, explode: exPlan && exPlan.units.map(u => [u.o.name, exPlan.plan[u.key].layer, +exPlan.plan[u.key].off.toFixed(1), u.ids.length]), arrows: connGroup.children.map(a => a.position.toArray().map(v => +v.toFixed(1))), долгиеЗадачи: window.__long.slice(-5), hist: hist.length, redo: redoStack.length, meshes: raw.children.length,
   result: !!resultMesh, plate: printPlate(),
   ghost: ghostDepth && {depth:+ghostDepth.size.y.toFixed(2), top:+ghostDepth.top.toFixed(2)}, cam: [+cam.position.x.toFixed(1), +orbit.target.x.toFixed(1)]});

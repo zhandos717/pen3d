@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Brush, Evaluator, ADDITION, SUBTRACTION, INTERSECTION } from 'three-bvh-csg';
-import { unitGeo } from './geometry.js';
+import { unitGeo, insetPts } from './geometry.js';
 
 const csg = new Evaluator(); csg.attributes = ['position', 'normal'];
 function brushOf(o, objToMesh, mat){
@@ -32,39 +32,80 @@ function dedupe(list){
   });
 }
 
-// Полое тело: внутренняя копия, уменьшенная на толщину стенки, вычитается из своей же формы
+// Полое тело: внутренняя копия, уменьшенная на толщину стенки, вычитается из своей же формы.
+// У эскиза внутренний контур — исходный, сдвинутый внутрь; масштаб тела тот же, сдвиг в долях
+// размаха (w = d = размах у эскиза). Открытая сторона — полость проходит её насквозь.
 export function innerOf(o){
   const s = +o.shell || 0;
-  if(!s || !['box','cyl','poly'].includes(o.type)) return null;
+  if(!s || !['box', 'cyl', 'poly', 'sketch'].includes(o.type)) return null;
+  const z0 = o.openBottom ? o.z - 1 : o.z + s, z1 = o.openTop ? o.z + o.h + 1 : o.z + o.h - s;
+  if(z1 - z0 < .4) return null;
+  const base = {...o, hole: true, shell: 0, edge: 0, name: o.name + ' (полость)', z: z0, h: z1 - z0};
+  if(o.type === 'sketch'){
+    if(!o.pts || o.w < 2*s + .4) return null;
+    try{ return {...base, pts: insetPts(o.pts, s / o.w)}; }catch(e){ return null; }
+  }
   const w = o.w - 2*s, d = o.d - 2*s;
-  if(w < .4 || d < .4 || o.h - s < .4) return null;        // стенка съела деталь
-  return {...o, hole: true, shell: 0, name: o.name + ' (полость)',
-    w, d,
-    h: o.openTop ? o.h - s + 1 : o.h - 2*s,                 // открыта сверху — режем насквозь
-    z: o.z + s};
+  if(w < .4 || d < .4) return null;                         // стенка съела деталь
+  return {...base, w, d};
+}
+
+// Что чем режется. Отверстие и полость тела из детали (grp) режут только свою деталь:
+// полость корпуса не должна вырезать батарейки, лежащие в нём. Отверстия без детали режут
+// всё, как раньше, — старые проекты собираются так же.
+export function cutPlan(objects){
+  const vis = objects.filter(o => o.vis);
+  const groups = new Map(), loose = {solids: [], keeps: [], holes: []};
+  for(const o of vis){
+    const g = o.grp ? (groups.get(o.grp) || groups.set(o.grp, {grp: o.grp, solids: [], keeps: [], holes: []}).get(o.grp)) : loose;
+    (o.hole ? g.holes : o.mode === 'keep' ? g.keeps : g.solids).push(o);
+  }
+  const fin = g => ({...g, cavities: g.solids.map(innerOf).filter(Boolean)});
+  return {groups: [...groups.values()].map(fin), loose: fin(loose)};
 }
 
 // Тело бывает трёх видов: обычное (складывается), отверстие (вычитается)
 // и «оставить общее» (keep) — от детали остаётся только то, что попало внутрь него.
 // Порядок обязателен: сложить, обрезать по keep, потом резать полости и отверстия,
 // иначе keep срежет уже прорезанные отверстия и они «зарастут».
-export function buildResult(objects, objToMesh, mat){
-  const solids = dedupe(objects.filter(o => o.vis && !o.hole && o.mode !== 'keep'));
-  const keeps = dedupe(objects.filter(o => o.vis && !o.hole && o.mode === 'keep'));
-  const cavities = solids.map(innerOf).filter(Boolean);
-  const holes = dedupe(objects.filter(o => o.vis && o.hole)).map(o => ({...o,
-    w: o.w + .002, d: o.d + .002, h: o.h + .002, z: o.z - .001}));
+const grow = o => ({...o, w: o.w + .002, d: o.d + .002, h: o.h + .002, z: o.z - .001});
+
+function cutBrush(g, objToMesh, mat){
+  const solids = dedupe(g.solids);
   if(!solids.length) return null;
   let acc = brushOf(solids[0], objToMesh, mat);
   const step = (o, op) => { const b = brushOf(o, objToMesh, mat), prev = acc; acc = csg.evaluate(acc, b, op);
     b.geometry.dispose(); prev.geometry.dispose(); };
   solids.slice(1).forEach(o => step(o, ADDITION));
-  keeps.forEach(o => step(o, INTERSECTION));              // оставляем только общую часть
-  cavities.forEach(o => step(o, SUBTRACTION));            // полости режем до отверстий
-  holes.forEach(o => step(o, SUBTRACTION));
-  // у одиночного тела трансформ живёт в матрице, а не в вершинах — переносим в геометрию
-  acc.updateMatrixWorld();
-  return new THREE.Mesh(acc.geometry.clone().applyMatrix4(acc.matrixWorld), mat);
+  dedupe(g.keeps).forEach(o => step(o, INTERSECTION));    // оставляем только общую часть
+  g.cavities.forEach(o => step(o, SUBTRACTION));           // полости режем до отверстий
+  dedupe(g.holes).map(grow).forEach(o => step(o, SUBTRACTION));
+  return acc;
+}
+const bake = (acc, mat) => { acc.updateMatrixWorld(); return new THREE.Mesh(acc.geometry.clone().applyMatrix4(acc.matrixWorld), mat); };
+
+// одна деталь — со своими полостями и отверстиями; для показа «вырезанной» в обычном виде
+export function buildPart(g, objToMesh, mat){
+  const acc = cutBrush(g, objToMesh, mat);
+  return acc && bake(acc, mat);
+}
+
+// Тела без детали — как раньше: всё объединяется, потом обрезается по keep, режется их
+// полостями и отверстиями. Детали приходят уже вырезанными своими полостями и отверстиями.
+export function buildResult(objects, objToMesh, mat){
+  const plan = cutPlan(objects), L = plan.loose;
+  let acc = null;
+  const add = b => { if(!b) return; if(!acc){ acc = b; return; } const prev = acc; acc = csg.evaluate(acc, b, ADDITION);
+    prev.geometry.dispose(); b.geometry.dispose(); };
+  for(const g of plan.groups) add(cutBrush(g, objToMesh, mat));
+  add(cutBrush({solids: L.solids, keeps: [], holes: [], cavities: []}, objToMesh, mat));
+  if(!acc) return null;
+  const step = (o, op) => { const b = brushOf(o, objToMesh, mat), prev = acc; acc = csg.evaluate(acc, b, op);
+    b.geometry.dispose(); prev.geometry.dispose(); };
+  dedupe(L.keeps).forEach(o => step(o, INTERSECTION));
+  L.cavities.forEach(o => step(o, SUBTRACTION));
+  dedupe(L.holes).map(grow).forEach(o => step(o, SUBTRACTION));
+  return bake(acc, mat);
 }
 
 // Насколько отверстие погружено в тело: пересечение показываем как «призрак»
