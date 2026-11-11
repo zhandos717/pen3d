@@ -1,4 +1,4 @@
-import { Vector3 } from 'three';
+import { Vector3 } from '/vendor/three@0.175.0/build/three.module.js';
 
 const DEGENERATE_EPSILON = 1e-8;
 const _tempVec = new Vector3();

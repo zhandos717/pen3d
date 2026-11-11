@@ -1,4 +1,4 @@
-import { Matrix4, Matrix3, Triangle } from 'three';
+import { Matrix4, Matrix3, Triangle } from '/vendor/three@0.175.0/build/three.module.js';
 import {
 	getHitSideWithCoplanarCheck,
 	getHitSide,

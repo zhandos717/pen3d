@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Brush, Evaluator, ADDITION, SUBTRACTION, INTERSECTION } from 'three-bvh-csg';
 import { unitGeo, unitGeoChunks, insetPts } from './geometry.js';
+import { runSteps } from './csg-run.js';
 
 const csg = new Evaluator(); csg.attributes = ['position', 'normal'];
 function brushOf(o, objToMesh, mat, geo = unitGeo(o)){
@@ -71,44 +72,61 @@ export function cutPlan(objects){
 // Порядок обязателен: сложить, обрезать по keep, потом резать полости и отверстия,
 // иначе keep срежет уже прорезанные отверстия и они «зарастут».
 const grow = o => ({...o, w: o.w + .002, d: o.d + .002, h: o.h + .002, z: o.z - .001});
+const L = {Brush, Evaluator, ADDITION, SUBTRACTION, INTERSECTION, BufferGeometry: THREE.BufferGeometry, BufferAttribute: THREE.BufferAttribute};
 
-function cutBrush(g, objToMesh, mat){
+// тело → шаг цепочки: сетка сразу в мировых координатах, чтобы её можно было отдать воркеру
+function stepOf(o, op, objToMesh, geo = unitGeo(o)){
+  const m = new THREE.Mesh(geo);
+  objToMesh(o, m);
+  m.scale.multiplyScalar(1 + 1e-5);     // см. brushOf: копланарные грани
+  m.updateMatrixWorld();
+  geo.applyMatrix4(m.matrixWorld);
+  if(!geo.attributes.normal) geo.computeVertexNormals();
+  return {op, pos: geo.attributes.position.array, norm: geo.attributes.normal.array, idx: geo.index ? geo.index.array : null};
+}
+
+// картинку-отверстие режем пачками фигур: см. unitGeoChunks
+export function partSteps(g, objToMesh){
   const solids = dedupe(g.solids);
   if(!solids.length) return null;
-  let acc = brushOf(solids[0], objToMesh, mat);
-  const step = (o, op, geo) => { const b = brushOf(o, objToMesh, mat, geo), prev = acc; acc = csg.evaluate(acc, b, op);
-    b.geometry.dispose(); prev.geometry.dispose(); };
-  const cut = o => unitGeoChunks(o).forEach(geo => step(o, SUBTRACTION, geo));
-  solids.slice(1).forEach(o => step(o, ADDITION));
-  dedupe(g.keeps).forEach(o => step(o, INTERSECTION));    // оставляем только общую часть
-  g.cavities.forEach(o => step(o, SUBTRACTION));           // полости режем до отверстий
-  dedupe(g.holes).map(grow).forEach(o => cut(o));
-  return acc;
+  const steps = [stepOf(solids[0], 'add', objToMesh)];
+  solids.slice(1).forEach(o => steps.push(stepOf(o, 'add', objToMesh)));
+  dedupe(g.keeps).forEach(o => steps.push(stepOf(o, 'keep', objToMesh)));
+  g.cavities.forEach(o => steps.push(stepOf(o, 'cut', objToMesh)));
+  dedupe(g.holes).map(grow).forEach(o => unitGeoChunks(o).forEach(geo => steps.push(stepOf(o, 'cut', objToMesh, geo))));
+  return steps;
 }
-const bake = (acc, mat) => { acc.updateMatrixWorld(); return new THREE.Mesh(acc.geometry.clone().applyMatrix4(acc.matrixWorld), mat); };
+export const runPart = steps => runSteps(steps, L);
+
+export function meshOfResult(r, mat){
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(r.pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(r.norm, 3));
+  if(r.idx) g.setIndex(new THREE.BufferAttribute(r.idx, 1));
+  return new THREE.Mesh(g, mat);
+}
 
 // одна деталь — со своими полостями и отверстиями; для показа «вырезанной» в обычном виде
 export function buildPart(g, objToMesh, mat){
-  const acc = cutBrush(g, objToMesh, mat);
-  return acc && bake(acc, mat);
+  const steps = partSteps(g, objToMesh);
+  return steps && meshOfResult(runPart(steps), mat);
 }
 
 // Тела без детали — как раньше: всё объединяется, потом обрезается по keep, режется их
 // полостями и отверстиями. Детали приходят уже вырезанными своими полостями и отверстиями.
 export function buildResult(objects, objToMesh, mat){
-  const plan = cutPlan(objects), L = plan.loose;
-  let acc = null;
-  const add = b => { if(!b) return; if(!acc){ acc = b; return; } const prev = acc; acc = csg.evaluate(acc, b, ADDITION);
-    prev.geometry.dispose(); b.geometry.dispose(); };
-  for(const g of plan.groups) add(cutBrush(g, objToMesh, mat));
-  add(cutBrush({solids: L.solids, keeps: [], holes: [], cavities: []}, objToMesh, mat));
-  if(!acc) return null;
-  const step = (o, op, geo) => { const b = brushOf(o, objToMesh, mat, geo), prev = acc; acc = csg.evaluate(acc, b, op);
-    b.geometry.dispose(); prev.geometry.dispose(); };
-  dedupe(L.keeps).forEach(o => step(o, INTERSECTION));
-  L.cavities.forEach(o => step(o, SUBTRACTION));
-  dedupe(L.holes).map(grow).forEach(o => unitGeoChunks(o).forEach(geo => step(o, SUBTRACTION, geo)));
-  return bake(acc, mat);
+  const plan = cutPlan(objects), L0 = plan.loose, steps = [];
+  for(const g of plan.groups){
+    const s = partSteps(g, objToMesh);
+    if(s) steps.push({...runPart(s), op: 'add'});
+  }
+  const loose = partSteps({solids: L0.solids, keeps: [], holes: [], cavities: []}, objToMesh);
+  if(loose) steps.push({...runPart(loose), op: 'add'});
+  if(!steps.length) return null;
+  dedupe(L0.keeps).forEach(o => steps.push(stepOf(o, 'keep', objToMesh)));
+  L0.cavities.forEach(o => steps.push(stepOf(o, 'cut', objToMesh)));
+  dedupe(L0.holes).map(grow).forEach(o => unitGeoChunks(o).forEach(geo => steps.push(stepOf(o, 'cut', objToMesh, geo))));
+  return meshOfResult(steps.length === 1 ? steps[0] : runPart(steps), mat);
 }
 
 // Насколько отверстие погружено в тело: пересечение показываем как «призрак»

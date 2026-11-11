@@ -1,4 +1,4 @@
-import { Group, Matrix4 } from 'three';
+import { Group, Matrix4 } from '/vendor/three@0.175.0/build/three.module.js';
 
 export class OperationGroup extends Group {
 

@@ -1,4 +1,4 @@
-import { Triangle, Vector3, Line3, Sphere, Plane } from 'three';
+import { Triangle, Vector3, Line3, Sphere, Plane } from '/vendor/three@0.175.0/build/three.module.js';
 import { SeparatingAxisBounds } from './SeparatingAxisBounds.js';
 import { closestPointsSegmentToSegment, sphereIntersectTriangle } from './MathUtilities.js';
 

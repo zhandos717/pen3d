@@ -1,4 +1,4 @@
-import { LineBasicMaterial, BufferAttribute, Box3, Group, MeshBasicMaterial, Object3D, BufferGeometry, Mesh, Matrix4 } from 'three';
+import { LineBasicMaterial, BufferAttribute, Box3, Group, MeshBasicMaterial, Object3D, BufferGeometry, Mesh, Matrix4 } from '/vendor/three@0.175.0/build/three.module.js';
 import { arrayToBox } from '../utils/ArrayBoxUtilities.js';
 import { MeshBVH } from '../core/MeshBVH.js';
 

@@ -1,4 +1,4 @@
-import { Line3, Triangle, Vector3, Plane, Ray } from 'three';
+import { Line3, Triangle, Vector3, Plane, Ray } from '/vendor/three@0.175.0/build/three.module.js';
 import { EdgesHelper } from './EdgesHelper.js';
 import { getTriCount } from '../core/utils/geometryUtils.js';
 import { toNormalizedRay } from '../core/utils/hashUtils.js';

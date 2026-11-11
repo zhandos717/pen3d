@@ -1,5 +1,5 @@
-import { Triangle, Line3, Vector3, Plane } from 'three';
-import { ExtendedTriangle } from 'three-mesh-bvh';
+import { Triangle, Line3, Vector3, Plane } from '/vendor/three@0.175.0/build/three.module.js';
+import { ExtendedTriangle } from '/vendor/three-mesh-bvh@0.7.8/src/index.js';
 import { isTriDegenerate } from './utils/triangleUtils.js';
 
 // NOTE: these epsilons likely should all be the same since they're used to measure the

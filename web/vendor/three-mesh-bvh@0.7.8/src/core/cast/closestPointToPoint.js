@@ -1,4 +1,4 @@
-import { Vector3 } from 'three';
+import { Vector3 } from '/vendor/three@0.175.0/build/three.module.js';
 
 const temp = /* @__PURE__ */ new Vector3();
 const temp1 = /* @__PURE__ */ new Vector3();

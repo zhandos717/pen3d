@@ -1,4 +1,4 @@
-import { Ray, Matrix4, DoubleSide, Vector3, Vector4, Triangle, Line3 } from 'three';
+import { Ray, Matrix4, DoubleSide, Vector3, Vector4, Triangle, Line3 } from '/vendor/three@0.175.0/build/three.module.js';
 import { IntersectionMap } from '../IntersectionMap.js';
 import {
 	ADDITION,

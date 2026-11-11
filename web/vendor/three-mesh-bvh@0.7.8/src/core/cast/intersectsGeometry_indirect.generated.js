@@ -1,4 +1,4 @@
-import { Box3, Matrix4 } from 'three';
+import { Box3, Matrix4 } from '/vendor/three@0.175.0/build/three.module.js';
 import { OrientedBox } from '../../math/OrientedBox.js';
 import { ExtendedTriangle } from '../../math/ExtendedTriangle.js';
 import { setTriangle } from '../../utils/TriangleUtilities.js';

@@ -1,4 +1,4 @@
-import { BufferGeometry } from 'three';
+import { BufferGeometry } from '/vendor/three@0.175.0/build/three.module.js';
 import { Brush } from '../Brush.js';
 import { ADDITION } from '../constants.js';
 

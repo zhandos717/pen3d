@@ -1,4 +1,4 @@
-import { MeshPhongMaterial } from 'three';
+import { MeshPhongMaterial } from '/vendor/three@0.175.0/build/three.module.js';
 import { csgGridShaderMixin } from './shaderUtils.js';
 
 export class GridMaterial extends MeshPhongMaterial {

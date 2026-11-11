@@ -1,4 +1,4 @@
-import { Vector2, Vector3, Vector4 } from 'three';
+import { Vector2, Vector3, Vector4 } from '/vendor/three@0.175.0/build/three.module.js';
 import { hashNumber, hashVertex2, hashVertex3, hashVertex4 } from './utils/hashUtils.js';
 import { getTriCount } from './utils/geometryUtils.js';
 import { computeDisjointEdges } from './utils/computeDisjointEdges.js';

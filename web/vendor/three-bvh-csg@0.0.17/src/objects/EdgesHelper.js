@@ -1,4 +1,4 @@
-import { LineSegments } from 'three';
+import { LineSegments } from '/vendor/three@0.175.0/build/three.module.js';
 
 export class EdgesHelper extends LineSegments {
 

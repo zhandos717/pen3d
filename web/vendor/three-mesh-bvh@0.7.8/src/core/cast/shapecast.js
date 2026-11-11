@@ -1,4 +1,4 @@
-import { Box3 } from 'three';
+import { Box3 } from '/vendor/three@0.175.0/build/three.module.js';
 import { CONTAINED } from '../Constants.js';
 import { arrayToBox } from '../../utils/ArrayBoxUtilities.js';
 import { PrimitivePool } from '../../utils/PrimitivePool.js';

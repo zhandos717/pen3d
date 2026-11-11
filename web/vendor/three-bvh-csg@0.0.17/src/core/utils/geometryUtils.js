@@ -1,4 +1,4 @@
-import { BufferAttribute } from 'three';
+import { BufferAttribute } from '/vendor/three@0.175.0/build/three.module.js';
 
 export function areSharedArrayBuffersSupported() {
 

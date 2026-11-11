@@ -1,14 +1,15 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { unitGeo, hingeShift, featureEdges } from './geometry.js';
+import { unitGeo, hingeShift } from './geometry.js';
+import { featureEdges } from './edges.js';
 import { textShapes, dropSmall } from './textshape.js';
 import { imageShapes, imageReady, importImage, setImageReady, srcKey } from './imageshape.js';
 import { explodePlan, ease } from './explode.js';
 import { lightLevel, resolveLights, normRole, normScenarios, LIGHT_MODES } from './preview.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { parseStl } from './stl-import.js';
-import { buildResult, buildPart, cutPlan as partPlan, innerOf, holeGhost } from './csg.js';
+import { buildResult, partSteps, runPart, meshOfResult, cutPlan as partPlan, innerOf, holeGhost } from './csg.js';
 import { meshToStlAsync } from './stl.js';
 import { PROMPT, PROVIDERS, sanitize } from './ai.js';
 import { gearSketch, roundedRect } from './gear.js';
@@ -282,22 +283,79 @@ function updatePartCuts(){
 // из неё исключены, чтобы двигаться и светиться по отдельности
 const LOOSE = '_loose';
 const looseList = () => objects.filter(o => !o.grp && o.vis && !o.ref && !o.role);
+// Вырез считается в воркере: решётка из сотни отверстий режется секунды, и на странице
+// это замораживало всё. Пока считается, видны исходные тела. Если воркер не поднялся
+// (старый браузер, файл открыт не с сервера) — считаем здесь же, как раньше.
+let cutWorker = null, workerDead = false, cutSeq = 0, cutRestarts = 0;
+const cutJobs = new Map(), cutLog = [];         // деталь → {id, key, steps, color}
+function cutWorkerUp(){
+  if(cutWorker || workerDead) return cutWorker;
+  try{
+    cutWorker = new Worker(new URL('./csg-worker.js', import.meta.url), {type: 'module'});
+    cutWorker.onmessage = e => cutDone(e.data);
+    cutWorker.onerror = e => {
+      e.preventDefault?.();
+      workerDead = true; cutWorker?.terminate(); cutWorker = null;
+      const left = [...cutJobs.keys()]; cutJobs.clear();
+      if(left.length) rebuildPartCuts();
+    };
+  }catch(e){ workerDead = true; cutWorker = null; }
+  return cutWorker;
+}
+function cutBusy(){
+  const s = $('status'), busy = t('считаю вырезы деталей…');
+  if(cutJobs.size) say(busy);
+  else if(s.textContent === busy) say('');
+}
+function placeCut(grp, key, mesh, edges){
+  const old = partCuts.get(grp);
+  if(old) kill(old.mesh);
+  if(!mesh){ partCuts.delete(grp); return; }
+  const lines = new THREE.BufferGeometry();
+  lines.setAttribute('position', new THREE.BufferAttribute(edges, 3));
+  mesh.add(new THREE.LineSegments(lines, EDGE_MAT));
+  mesh.userData.baseMat = mesh.material;
+  cutsGroup.add(mesh); partCuts.set(grp, {key, mesh});
+}
+function cutDone(r){
+  const grp = [...cutJobs].find(([, j]) => j.id === r.id)?.[0];
+  if(grp === undefined) return;                  // устарел: деталь успели поменять
+  const job = cutJobs.get(grp); cutJobs.delete(grp);
+  cutLog.push({grp, мс: r.ms, шагов: job.steps.length, ждал: Math.round(performance.now() - job.t0)}); cutLog.splice(0, cutLog.length - 10);
+  if(r.error){ say('деталь не вырезалась: ' + r.error, 'err'); placeCut(grp, job.key, null); }
+  else placeCut(grp, job.key, meshOfResult(r, solidMat(job.color)), r.edges);
+  cutBusy();
+  sync();
+}
 function rebuildPartCuts(){
   const plan = partPlan(objects.filter(o => o.grp).map(geoOf));
   if(previewOn){ const l = looseList(); if(l.length) plan.groups.push({...partPlan(l.map(geoOf)).loose, grp: LOOSE}); }
+  let restart = false;
+  const fresh = [];
   for(const g of plan.groups){
     const list = g.grp === LOOSE ? looseList() : objects.filter(o => o.grp === g.grp && o.vis);
     if(!partNeedsCut(list)) continue;
     const key = partKey(list), old = partCuts.get(g.grp);
     if(old && old.key === key) continue;
-    let mesh = null;
-    try{ mesh = buildPart({...g, holes: g.holes.concat(globalHolesFor(list).map(geoOf))}, (o, b) => objToMesh(o, b), solidMat(g.solids[0]?.color)); }catch(err){ say('деталь не вырезалась: ' + err.message, 'err'); }
-    if(old) kill(old.mesh);
-    if(!mesh){ partCuts.delete(g.grp); continue; }
-    mesh.add(new THREE.LineSegments(featureEdges(mesh.geometry, 25), EDGE_MAT));
-    mesh.userData.baseMat = mesh.material;
-    cutsGroup.add(mesh); partCuts.set(g.grp, {key, mesh});
+    if(cutJobs.get(g.grp)?.key === key) continue;
+    let steps = null;
+    try{ steps = partSteps({...g, holes: g.holes.concat(globalHolesFor(list).map(geoOf))}, (o, b) => objToMesh(o, b)); }
+    catch(err){ say('деталь не вырезалась: ' + err.message, 'err'); }
+    if(!steps){ placeCut(g.grp, key, null); continue; }
+    const color = g.solids[0]?.color;
+    if(!cutWorkerUp()){
+      let r = null;
+      try{ r = runPart(steps); }catch(err){ say('деталь не вырезалась: ' + err.message, 'err'); }
+      placeCut(g.grp, key, r && meshOfResult(r, solidMat(color)), r && featureEdges(r.pos, r.idx));
+      continue;
+    }
+    if(cutJobs.has(g.grp)) restart = true;       // старый расчёт этой детали уже не нужен
+    cutJobs.set(g.grp, {id: ++cutSeq, key, steps, color, t0: performance.now()});
+    fresh.push(g.grp);
   }
+  if(restart){ cutRestarts++; cutWorker.terminate(); cutWorker = null; cutWorkerUp(); }
+  for(const [grp, j] of cutJobs) if(restart || fresh.includes(grp)) cutWorker?.postMessage({id: j.id, steps: j.steps});
+  cutBusy();
   sync();
 }
 
@@ -2820,6 +2878,6 @@ try{
 
 // в скрытой вкладке requestAnimationFrame стоит — кадр разбора и выносок можно прогнать руками
 window.__tick = () => { stepExplode(); stepPreview(); drawExplodeLabels(); drawLabels(); };
-window.__dbg = () => ({screenOf: id => { const m = meshOf(id); m.updateMatrixWorld(); const p = new THREE.Box3().setFromObject(m).getCenter(new THREE.Vector3()).project(cam), r = view.getBoundingClientRect(); return [r.left + (p.x*.5 + .5) * r.width, r.top + (-p.y*.5 + .5) * r.height]; }, objects, selId, parts, connectors, scenarios, preview: {on: previewOn, held: [...held], press: [...pressOff].map(([k, v]) => [k, +v.length().toFixed(2)]), lights: [...lightMats].map(([k, m]) => [k, +m.emissiveIntensity.toFixed(2), '#' + m.emissive.getHexString()]), halos: [...halos].filter(([, h]) => h.visible).map(([k]) => k), env: !!scene.environment, shadows: renderer.shadowMap.enabled}, cuts: [...partCuts].map(([g, c]) => [g, c.mesh.geometry.attributes.position.count / 3, c.mesh.visible]), cutMesh: g => partCuts.get(g)?.mesh, explode: exPlan && exPlan.units.map(u => [u.o.name, exPlan.plan[u.key].layer, +exPlan.plan[u.key].off.toFixed(1), u.ids.length]), arrows: connGroup.children.map(a => a.position.toArray().map(v => +v.toFixed(1))), долгиеЗадачи: window.__long.slice(-5), hist: hist.length, redo: redoStack.length, meshes: raw.children.length,
+window.__dbg = () => ({cutLog, cutRestarts,screenOf: id => { const m = meshOf(id); m.updateMatrixWorld(); const p = new THREE.Box3().setFromObject(m).getCenter(new THREE.Vector3()).project(cam), r = view.getBoundingClientRect(); return [r.left + (p.x*.5 + .5) * r.width, r.top + (-p.y*.5 + .5) * r.height]; }, objects, selId, parts, connectors, scenarios, preview: {on: previewOn, held: [...held], press: [...pressOff].map(([k, v]) => [k, +v.length().toFixed(2)]), lights: [...lightMats].map(([k, m]) => [k, +m.emissiveIntensity.toFixed(2), '#' + m.emissive.getHexString()]), halos: [...halos].filter(([, h]) => h.visible).map(([k]) => k), env: !!scene.environment, shadows: renderer.shadowMap.enabled}, cuts: [...partCuts].map(([g, c]) => [g, c.mesh.geometry.attributes.position.count / 3, c.mesh.visible]), cutMesh: g => partCuts.get(g)?.mesh, explode: exPlan && exPlan.units.map(u => [u.o.name, exPlan.plan[u.key].layer, +exPlan.plan[u.key].off.toFixed(1), u.ids.length]), arrows: connGroup.children.map(a => a.position.toArray().map(v => +v.toFixed(1))), долгиеЗадачи: window.__long.slice(-5), hist: hist.length, redo: redoStack.length, meshes: raw.children.length,
   result: !!resultMesh, plate: printPlate(),
   ghost: ghostDepth && {depth:+ghostDepth.size.y.toFixed(2), top:+ghostDepth.top.toFixed(2)}, cam: [+cam.position.x.toFixed(1), +orbit.target.x.toFixed(1)]});

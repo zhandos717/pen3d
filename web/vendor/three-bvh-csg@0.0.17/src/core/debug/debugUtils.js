@@ -1,4 +1,4 @@
-import { BufferAttribute, Color, MathUtils } from 'three';
+import { BufferAttribute, Color, MathUtils } from '/vendor/three@0.175.0/build/three.module.js';
 
 export function getTriangleDefinitions( ...triangles ) {
 

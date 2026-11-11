@@ -1,4 +1,4 @@
-import { Vector3, Ray } from 'three';
+import { Vector3, Ray } from '/vendor/three@0.175.0/build/three.module.js';
 import { toEdgeIndex, toTriIndex, matchEdges, getProjectedDistance } from './halfEdgeUtils.js';
 import { toNormalizedRay } from './hashUtils.js';
 import { RaySet } from './RaySet.js';

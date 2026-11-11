@@ -1,4 +1,4 @@
-import { Triangle } from 'three';
+import { Triangle } from '/vendor/three@0.175.0/build/three.module.js';
 import { setDebugContext } from '../operations/operationsUtils.js';
 
 class TriangleIntersectData {

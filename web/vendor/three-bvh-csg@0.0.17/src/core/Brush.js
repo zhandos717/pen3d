@@ -1,5 +1,5 @@
-import { Mesh, Matrix4 } from 'three';
-import { MeshBVH } from 'three-mesh-bvh';
+import { Mesh, Matrix4 } from '/vendor/three@0.175.0/build/three.module.js';
+import { MeshBVH } from '/vendor/three-mesh-bvh@0.7.8/src/index.js';
 import { HalfEdgeMap } from './HalfEdgeMap.js';
 import { areSharedArrayBuffersSupported, convertToSharedArrayBuffer, ensureIndex, getTriCount } from './utils/geometryUtils.js';
 

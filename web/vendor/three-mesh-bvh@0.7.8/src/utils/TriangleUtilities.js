@@ -1,5 +1,5 @@
 
-import { Vector2, Vector3, Triangle } from 'three';
+import { Vector2, Vector3, Triangle } from '/vendor/three@0.175.0/build/three.module.js';
 
 // sets the vertices of triangle `tri` with the 3 vertices after i
 export function setTriangle( tri, i, index, pos ) {
