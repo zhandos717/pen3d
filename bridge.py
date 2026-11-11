@@ -994,6 +994,12 @@ class H(BaseHTTPRequestHandler):
         try:
             if p == '/api/scene':
                 data = json.loads(body)
+                # пустая сцена поверх непустой — почти всегда вкладка, не дождавшаяся загрузки
+                # (или старая версия страницы); осознанную очистку страница помечает заголовком
+                if not data.get('objects') and not self.headers.get('x-clear'):
+                    cur = db.scene_get() or {}
+                    if cur.get('objects'):
+                        return self._send(409, {'error': 'пустая сцена не записана поверх проекта'})
                 db.scene_put(data)
                 return self._send(200, {'ok': True, 'snapshot': db.snapshot_maybe(data)})
             if p == '/api/history':

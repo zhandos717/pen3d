@@ -594,11 +594,16 @@ async function saveStl(bytes, name){
 
 // ---------- сохранение ----------
 // sync() дёргается на каждое движение гизмо, поэтому пишем в базу не чаще раза в 400 мс
-let saveTimer = null;
+// Пока сцена не загрузилась с сервера, писать в базу нельзя: страница, открытая в момент
+// перезапуска сервера, стартует пустой и иначе затирает проект первым же автосохранением.
+let saveTimer = null, booted = false;
 function persist(){
+  if(!booted) return;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    fetch('/api/scene', {method:'POST', headers:{'content-type':'application/json'}, body: snapshot()})
+    const headers = {'content-type': 'application/json'};
+    if(!objects.length) headers['x-clear'] = '1';          // пустая сцена — только осознанно
+    fetch('/api/scene', {method:'POST', headers, body: snapshot()})
       .catch(() => say('сцена не сохранилась — сервер не отвечает', 'err'));
   }, 400);
 }
@@ -2913,7 +2918,7 @@ async function migrateLocal(st){
   return moved ? await (await fetch('/api/state')).json() : st;
 }
 
-async function boot(){
+async function boot(retry = 0){
   try{
     const r = await fetch('/api/state');
     // страница открыта не через сервер usta (просто файлом или чужим сервером) — вместо JSON
@@ -2924,10 +2929,14 @@ async function boot(){
     if(st.scene) restore(st.scene);
     lib = st.sketches || [];
     Object.assign(tok, st.tokens || {});
+    booted = true;
+    if(retry) say('сервер снова на связи — проект загружен', 'ok');
   }catch(e){
     say(e.message === 'offline'
       ? 'сервер usta не запущен — правки не сохранятся. Запусти make run и открой 127.0.0.1:8765'
       : 'база не ответила, правки не сохранятся: ' + e.message, 'err');
+    // сервер мог просто перезапускаться: пока человек ничего не начал, пробуем ещё
+    if(!objects.length && retry < 30) setTimeout(() => boot(retry + 1), 2000);
   }
   renderLib(); showTokens(); sync();
 }
