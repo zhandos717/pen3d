@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { unitGeo, hingeShift } from './geometry.js';
+import { unitGeo, hingeShift, featureEdges } from './geometry.js';
 import { textShapes, dropSmall } from './textshape.js';
 import { imageShapes, imageReady, importImage, setImageReady, srcKey } from './imageshape.js';
 import { explodePlan, ease } from './explode.js';
@@ -294,7 +294,7 @@ function rebuildPartCuts(){
     try{ mesh = buildPart({...g, holes: g.holes.concat(globalHolesFor(list).map(geoOf))}, (o, b) => objToMesh(o, b), solidMat(g.solids[0]?.color)); }catch(err){ say('деталь не вырезалась: ' + err.message, 'err'); }
     if(old) kill(old.mesh);
     if(!mesh){ partCuts.delete(g.grp); continue; }
-    mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, 25), EDGE_MAT));
+    mesh.add(new THREE.LineSegments(featureEdges(mesh.geometry, 25), EDGE_MAT));
     mesh.userData.baseMat = mesh.material;
     cutsGroup.add(mesh); partCuts.set(g.grp, {key, mesh});
   }

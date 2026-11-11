@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { Brush, Evaluator, ADDITION, SUBTRACTION, INTERSECTION } from 'three-bvh-csg';
-import { unitGeo, insetPts } from './geometry.js';
+import { unitGeo, unitGeoChunks, insetPts } from './geometry.js';
 
 const csg = new Evaluator(); csg.attributes = ['position', 'normal'];
-function brushOf(o, objToMesh, mat){
-  const b = new Brush(unitGeo(o), mat);
+function brushOf(o, objToMesh, mat, geo = unitGeo(o)){
+  const b = new Brush(geo, mat);
   objToMesh(o, b);
   // у двух тел с совпадающей гранью (напр. цилиндры одного диаметра встык) грань
   // выходит идеально копланарной, и evaluate зависает в бесконечном цикле. Сдвиг
@@ -76,12 +76,13 @@ function cutBrush(g, objToMesh, mat){
   const solids = dedupe(g.solids);
   if(!solids.length) return null;
   let acc = brushOf(solids[0], objToMesh, mat);
-  const step = (o, op) => { const b = brushOf(o, objToMesh, mat), prev = acc; acc = csg.evaluate(acc, b, op);
+  const step = (o, op, geo) => { const b = brushOf(o, objToMesh, mat, geo), prev = acc; acc = csg.evaluate(acc, b, op);
     b.geometry.dispose(); prev.geometry.dispose(); };
+  const cut = o => unitGeoChunks(o).forEach(geo => step(o, SUBTRACTION, geo));
   solids.slice(1).forEach(o => step(o, ADDITION));
   dedupe(g.keeps).forEach(o => step(o, INTERSECTION));    // оставляем только общую часть
   g.cavities.forEach(o => step(o, SUBTRACTION));           // полости режем до отверстий
-  dedupe(g.holes).map(grow).forEach(o => step(o, SUBTRACTION));
+  dedupe(g.holes).map(grow).forEach(o => cut(o));
   return acc;
 }
 const bake = (acc, mat) => { acc.updateMatrixWorld(); return new THREE.Mesh(acc.geometry.clone().applyMatrix4(acc.matrixWorld), mat); };
@@ -102,11 +103,11 @@ export function buildResult(objects, objToMesh, mat){
   for(const g of plan.groups) add(cutBrush(g, objToMesh, mat));
   add(cutBrush({solids: L.solids, keeps: [], holes: [], cavities: []}, objToMesh, mat));
   if(!acc) return null;
-  const step = (o, op) => { const b = brushOf(o, objToMesh, mat), prev = acc; acc = csg.evaluate(acc, b, op);
+  const step = (o, op, geo) => { const b = brushOf(o, objToMesh, mat, geo), prev = acc; acc = csg.evaluate(acc, b, op);
     b.geometry.dispose(); prev.geometry.dispose(); };
   dedupe(L.keeps).forEach(o => step(o, INTERSECTION));
   L.cavities.forEach(o => step(o, SUBTRACTION));
-  dedupe(L.holes).map(grow).forEach(o => step(o, SUBTRACTION));
+  dedupe(L.holes).map(grow).forEach(o => unitGeoChunks(o).forEach(geo => step(o, SUBTRACTION, geo)));
   return bake(acc, mat);
 }
 
