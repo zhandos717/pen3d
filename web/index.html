@@ -453,6 +453,7 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
         <button data-add="torus"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="9" ry="5"/><ellipse cx="12" cy="12" rx="3.6" ry="2"/></svg>Кольцо</button>
         <button data-add="wedge"><svg viewBox="0 0 24 24"><path d="M3 19h18M3 19V9l16 4v6M3 9l16 4"/></svg>Клин</button>
         <button data-add="thread"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M6.5 9c3 1 8-1 11 0M6.5 12c3 1 8-1 11 0M6.5 15c3 1 8-1 11 0"/></svg>Резьба</button>
+        <button data-add="text" style="grid-column:1/-1" title="Надпись выпуклая или как отверстие — вдавленная"><svg viewBox="0 0 24 24"><path d="M5 5h14M12 5v14M9 19h6"/></svg>Текст</button>
         <button id="sketch" style="grid-column:1/-1"><svg viewBox="0 0 24 24"><path d="M3 21l1-4.5L14.5 6l3.5 3.5L7.5 20 3 21z"/><path d="M13 7.5l3.5 3.5"/></svg>Нарисовать эскиз</button>
       </div>
     </div>
@@ -580,6 +581,15 @@ button.busy::after{content:'';position:absolute;left:-40%;top:0;bottom:0;width:4
           <label class="f" id="p-pitch-row">шаг, мм <input id="p-pitch" type="text" inputmode="decimal" step="0.25" min="0.3"></label>
           <label class="f" id="p-round-row" title="скругление в плане — не полноценный fillet по рёбрам">
             радиус угла, мм <input id="p-round" type="text" inputmode="decimal" step="0.5" min="0" value="0"></label>
+          <div id="p-text-row" class="stack" style="gap:4px">
+            <label class="f wide">текст <input id="p-text" type="text" spellcheck="false"></label>
+            <div class="pair">
+              <select id="p-font" aria-label="шрифт">
+                <option>Arial</option><option>Arial Rounded MT Bold</option><option>Helvetica</option><option>Georgia</option>
+              </select>
+              <label class="f chk">жирный <input id="p-bold" type="checkbox"></label>
+            </div>
+          </div>
           <label class="f" id="p-edge-row" title="скругляет верхнее и нижнее рёбра по всему контуру — деталь приятнее в руке">
             скругление рёбер, мм <input id="p-edge" type="text" inputmode="decimal" value="0"></label>
         </div>

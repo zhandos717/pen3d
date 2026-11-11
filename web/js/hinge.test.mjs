@@ -11,7 +11,8 @@ import assert from 'assert';
 // geometry.js просит голый 'three', в браузере его даёт importmap — тут подставляем вендор
 const here = fileURLToPath(new URL('.', import.meta.url));
 const three = here + '../vendor/three@0.175.0/build/three.module.js';
-const src = readFileSync(here + 'geometry.js', 'utf8').replace("from 'three'", `from '${three}'`);
+const src = readFileSync(here + 'geometry.js', 'utf8').replace("from 'three'", `from '${three}'`)
+  .replace("from './textshape.js'", `from '${here}textshape.js'`);
 const tmp = join(mkdtempSync(join(tmpdir(), 'hinge-')), 'geometry.mjs');
 writeFileSync(tmp, src);
 const { hingeShift, HINGE } = await import(tmp);

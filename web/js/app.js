@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { unitGeo, hingeShift } from './geometry.js';
+import { textShapes } from './textshape.js';
 import { parseStl } from './stl-import.js';
 import { buildResult, holeGhost } from './csg.js';
 import { meshToStlAsync } from './stl.js';
@@ -304,6 +305,7 @@ const kill = m => { m.geometry?.dispose(); m.children.forEach(c => c.geometry?.d
 const sig = o => o.type === 'poly' ? 'poly:' + o.sides
   : o.type === 'sketch' ? 'sketch:' + JSON.stringify(o.pts) + (o.edge > 0 ? `:${o.edge}:${o.w}:${o.h}` : '')   // скругление в единичной геометрии зависит от пропорций
   : o.type === 'thread' ? `thread:${o.dia}:${o.pitch}:${o.h}`
+  : o.type === 'text' ? `text:${o.text}:${o.font}:${o.bold !== false}`
   : o.type === 'stl' ? 'stl:' + o.id            // точки импорта неизменны — не перестраивать зря
   : o.type;
 
@@ -502,18 +504,36 @@ function freeSpot(o){
 
 function add(type, extra={}){
   const NAMES = {box:'Короб', cyl:'Цилиндр', poly:'Призма', sketch:'Эскиз', thread:'Резьба',
-                 sphere:'Шар', cone:'Конус', torus:'Кольцо', wedge:'Клин'};
+                 sphere:'Шар', cone:'Конус', torus:'Кольцо', wedge:'Клин', text:'Текст'};
   const o = {id: nextId, name: NAMES[type] + ' ' + nextId,
     type, x:0, y:0, z:0, w:30, d:30, h:10, rot:0, rx:0, rz:0, sides:6, dia:10, pitch:1.5,
     color:BODY, shell:0, openTop:false, hole:false, vis:true, ...extra};
   if(['cyl','poly','cone','sphere','torus','wedge'].includes(type)) o.h = 15;
   if(type === 'thread'){ o.h = 20; o.w = o.d = o.dia; }
+  // надпись: d — высота букв, w — по пропорции строки; h — толщина рельефа
+  if(type === 'text'){
+    Object.assign(o, {text: 'Ayu', font: 'Arial', bold: true, d: 12, h: 2, ...extra});
+    o.w = +(o.d * (textShapes(o.text, o.font, o.bold)?.aspect || 3)).toFixed(2);
+  }
   if(!('x' in extra)) Object.assign(o, freeSpot(o));
   push();
   nextId++; objects.push(o); selId = o.id; sync(); say('добавлен: ' + o.name);
   return o;
 }
 document.querySelectorAll('[data-add]').forEach(b => b.onclick = () => add(b.dataset.add));
+// смена текста или шрифта меняет пропорцию строки: высота букв (d) остаётся, ширина пересчитывается
+function setText(patch){
+  const o = sel(); if(!o || o.type !== 'text') return;
+  const next = {text: o.text, font: o.font, bold: o.bold !== false, ...patch};
+  if(!String(next.text).trim()) return say('пустую надпись не напечатать', 'err'), fillProps();
+  const t = textShapes(next.text, next.font, next.bold);
+  if(!t) return say('в этом шрифте нет таких букв', 'err'), fillProps();
+  push(); Object.assign(o, next, {w: +(o.d * t.aspect).toFixed(2)}); sync();
+}
+$('p-text').onchange = e => setText({text: e.target.value});
+$('p-text').onkeydown = e => { if(e.key === 'Enter') e.target.blur(); e.stopPropagation(); };
+$('p-font').onchange = e => setText({font: e.target.value});
+$('p-bold').onchange = e => setText({bold: e.target.checked});
 $('del').onclick = () => { const o = sel(); if(!o) return;
   push();
   objects = objects.filter(x => x !== o); selId = null; sync(); say('удалён: ' + o.name); };
@@ -659,6 +679,11 @@ function fillProps(){
   $('p-hinge').value = o.hinge || '';
   $('p-fit').value = o.fit || '';
   $('p-edge-row').style.display = (o.type === 'sketch' || o.type === 'box') && !o.hole ? '' : 'none';
+  $('p-text-row').style.display = o.type === 'text' ? '' : 'none';
+  if(o.type === 'text'){
+    if(document.activeElement !== $('p-text')) $('p-text').value = o.text || '';
+    $('p-font').value = o.font || 'Arial'; $('p-bold').checked = o.bold !== false;
+  }
   $('p-fit-row').style.display = o.hole ? '' : 'none';
   const g = gap(o), size = o.type === 'thread' ? o.dia : o.w;
   $('p-fit-info').hidden = !o.hole;

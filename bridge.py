@@ -22,12 +22,13 @@ PRESETS = dict(
 
 BED = 256
 
-SHAPE_TYPES = ['box', 'cyl', 'poly', 'sphere', 'cone', 'wedge', 'thread']
+SHAPE_TYPES = ['box', 'cyl', 'poly', 'sphere', 'cone', 'wedge', 'thread', 'text']
 
 TOOLS = [
     {'type': 'function', 'function': {
         'name': 'add_shape',
-        'description': 'Поставить тело на стол. Возвращает id. Для thread задают dia и pitch, а не w/d.',
+        'description': 'Поставить тело на стол. Возвращает id. Для thread задают dia и pitch, а не w/d. '
+                       'Для text — строку text; d — высота букв, w — длина надписи, h — толщина рельефа.',
         'parameters': {'type': 'object', 'properties': {
             'name': {'type': 'string'},
             'type': {'type': 'string', 'enum': SHAPE_TYPES},
@@ -37,6 +38,7 @@ TOOLS = [
             'w': {'type': 'number'}, 'd': {'type': 'number'}, 'h': {'type': 'number'},
             'rot': {'type': 'number'}, 'sides': {'type': 'integer'},
             'dia': {'type': 'number'}, 'pitch': {'type': 'number'},
+            'text': {'type': 'string', 'description': 'надпись для type=text'},
             'hole': {'type': 'boolean', 'description': 'true — тело вычитается из остальных'}},
             'required': ['name', 'type', 'h']}}},
     {'type': 'function', 'function': {
@@ -1262,7 +1264,9 @@ if __name__ == '__main__':
               '  IP и Access Code — на экране A1: Settings > Network (LAN Only Mode), serial там же.')
     db.init()
     host = '0.0.0.0' if '--lan' in sys.argv else '127.0.0.1'
-    port = 8765
+    port = int(os.environ.get('USTA_PORT') or 8765)
+    if '--port' in sys.argv:
+        port = int(sys.argv[sys.argv.index('--port') + 1])
     print(f'usta: http://{"127.0.0.1" if host == "127.0.0.1" else socket.gethostbyname(socket.gethostname())}:{port}'
           + ('' if host == '127.0.0.1' else '  (открыт в локальную сеть)'))
     ThreadingHTTPServer((host, port), H).serve_forever()

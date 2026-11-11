@@ -16,6 +16,7 @@ An optional AI agent builds parts for you: it places primitives step by step, ch
 - **Material estimate** — grams, filament length, print time, layer count and cost, sliced with your current settings. The slice is cached, so hitting print right after costs nothing extra.
 - **Fits that actually fit** — a printed hole comes out smaller than modelled, so the peg does not go in. Mark a hole as press / snug / sliding / loose, type the nominal size, and the clearance for *your* printer is added on build. Calibrate once with the built-in test coupon.
 - **Project parameters** — named values like `wall = 2`; use them in any size field and the part rebuilds when you change one.
+- **Text** — embossed or engraved lettering in any system font, Cyrillic and Kazakh included; no font files needed.
 - **Modelling operations** — mirror, linear and circular arrays, and an intersection mode that trims the part down to a mask body.
 - **Server-side printability checks** — connectivity, floating bodies, holes larger than the part, walls too thin.
 
@@ -45,7 +46,7 @@ python3 -m venv .venv
 .venv/bin/python bridge.py
 ```
 
-Open <http://127.0.0.1:8765>. Without a config you can still model and download STL — printing and AI need the file below.
+Open <http://127.0.0.1:8765>. Port 8765 taken? `make run PORT=8770`, or `bridge.py --port 8770`, or `USTA_PORT=8770`. Without a config you can still model and download STL — printing and AI need the file below.
 
 Sanity checks: `make check` runs all three — slicing a test cube with the fastener templates, exercising the database, and checking the translation dictionaries for idempotency (a non-idempotent entry sends the DOM observer into an endless loop). `make help` lists every target.
 

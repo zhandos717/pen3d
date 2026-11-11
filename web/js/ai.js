@@ -43,7 +43,7 @@ export const PROVIDERS = {
 // Слабые модели стабильно косячат двумя способами: отверстие вровень со стенкой
 // (остаётся плёнка) и отверстие крупнее самой детали (съедает её целиком).
 export function sanitize(list){
-  const TYPES = ['box','cyl','poly','thread','sphere','cone','wedge'];
+  const TYPES = ['box','cyl','poly','thread','sphere','cone','wedge','text'];
   const norm = o => {
     const t = TYPES.includes(o.type) ? o.type : 'box';
     const dia = Math.max(2, +o.dia || +o.w || 10);
@@ -53,7 +53,8 @@ export function sanitize(list){
       h: Math.max(.2, +o.h||10), rot:+o.rot||0,
       sides: Math.max(3, Math.min(64, +o.sides||6)),
       dia, pitch: Math.max(.3, Math.min(5, +o.pitch || Math.round(dia*.13*4)/4 || 1.5)),
-      hole: !!o.hole, name: String(o.name || o.type)};
+      hole: !!o.hole, name: String(o.name || o.type),
+      ...(t === 'text' ? {text: String(o.text || 'Текст'), font: String(o.font || 'Arial'), bold: o.bold !== false} : {})};
   };
   const all = list.map(norm);
   const solids = all.filter(o => !o.hole);
