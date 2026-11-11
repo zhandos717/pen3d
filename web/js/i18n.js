@@ -690,6 +690,7 @@ if(D){
       if(busy) return;
       busy = true;
       for(const m of ms){
+        if(m.target instanceof SVGElement) continue;          // выноски разборки: линии без текста
         if(m.type === 'characterData') walk(m.target);
         else for(const n of m.addedNodes) walk(n);
       }
